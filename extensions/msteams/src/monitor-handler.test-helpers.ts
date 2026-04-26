@@ -1,8 +1,8 @@
 import { vi } from "vitest";
 import type { OpenClawConfig, PluginRuntime, RuntimeEnv } from "../runtime-api.js";
 import type { MSTeamsConversationStore } from "./conversation-store.js";
-import type { MSTeamsAdapter } from "./messenger.js";
 import type { MSTeamsActivityHandler, MSTeamsMessageHandlerDeps } from "./monitor-handler.js";
+import type { MSTeamsApp, MSTeamsTeamsSdk } from "./sdk.js";
 import type { MSTeamsPollStore } from "./polls.js";
 import { setMSTeamsRuntime } from "./runtime.js";
 
@@ -94,12 +94,30 @@ export function createMSTeamsMessageHandlerDeps(params?: {
   cfg?: OpenClawConfig;
   runtime?: RuntimeEnv;
 }): MSTeamsMessageHandlerDeps {
-  const adapter: MSTeamsAdapter = {
-    continueConversation: async () => {},
-    process: async () => {},
-    updateActivity: async () => {},
-    deleteActivity: async () => {},
-  };
+  const app = {
+    tokenManager: {
+      getBotToken: async () => ({ toString: () => "bot-token" }),
+      getGraphToken: async () => ({ toString: () => "graph-token" }),
+    },
+    api: {},
+    graph: {},
+    send: async () => ({ id: "sent" }),
+    initialize: async () => {},
+    on: () => {},
+  } as unknown as MSTeamsApp;
+  const sdk = {
+    App: class {} as unknown,
+    Client: class {
+      conversations = {
+        activities: () => ({
+          create: async () => ({ id: "created" }),
+          update: async () => ({ id: "updated" }),
+          delete: async () => {},
+        }),
+      };
+    } as unknown,
+    ExpressAdapter: class {} as unknown,
+  } as MSTeamsTeamsSdk;
   const conversationStore: MSTeamsConversationStore = {
     upsert: async () => {},
     get: async () => null,
@@ -118,7 +136,8 @@ export function createMSTeamsMessageHandlerDeps(params?: {
     cfg: params?.cfg ?? {},
     runtime: (params?.runtime ?? { error: vi.fn() }) as RuntimeEnv,
     appId: "test-app-id",
-    adapter,
+    app,
+    sdk,
     tokenProvider: {
       getAccessToken: async () => "token",
     },

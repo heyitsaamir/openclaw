@@ -10,7 +10,6 @@ import {
 import { createMSTeamsConversationStoreFs } from "./conversation-store-fs.js";
 import type { MSTeamsConversationStore } from "./conversation-store.js";
 import { formatUnknownError } from "./errors.js";
-import type { MSTeamsAdapter } from "./messenger.js";
 import { registerMSTeamsHandlers, type MSTeamsActivityHandler } from "./monitor-handler.js";
 import { createMSTeamsPollStoreFs, type MSTeamsPollStore } from "./polls.js";
 import {
@@ -18,12 +17,7 @@ import {
   resolveMSTeamsUserAllowlist,
 } from "./resolve-allowlist.js";
 import { getMSTeamsRuntime } from "./runtime.js";
-import {
-  createBotFrameworkJwtValidator,
-  createMSTeamsAdapter,
-  createMSTeamsTokenProvider,
-  loadMSTeamsSdkWithAuth,
-} from "./sdk.js";
+import { createMSTeamsTokenProvider, loadMSTeamsSdkWithAuth } from "./sdk.js";
 import { createMSTeamsSsoTokenStoreFs } from "./sso-token-store.js";
 import type { MSTeamsSsoDeps } from "./sso.js";
 import { resolveMSTeamsCredentials } from "./token.js";
@@ -227,12 +221,34 @@ export async function monitorMSTeamsProvider(
   // Dynamic import to avoid loading SDK when provider is disabled
   const express = await import("express");
 
-  const { sdk, app } = await loadMSTeamsSdkWithAuth(creds);
+  // Create Express server first, then wrap it with the SDK's ExpressAdapter
+  // so the App registers its route handler on it (including JWT validation).
+  const expressApp = express.default();
+
+  // Cheap pre-parse auth gate: reject requests without a Bearer token before
+  // spending CPU/memory on JSON body parsing. This prevents unauthenticated
+  // request floods from forcing body parsing on internet-exposed webhooks.
+  expressApp.use((req: Request, res: Response, next: (err?: unknown) => void) => {
+    const auth = req.headers.authorization;
+    if (!auth || !auth.startsWith("Bearer ")) {
+      res.status(401).json({ error: "Unauthorized" });
+      return;
+    }
+    next();
+  });
+
+  const configuredPath = (msteamsCfg.webhook?.path ?? "/api/messages") as `/${string}`;
+
+  // Lazy-load the SDK and create the App with ExpressAdapter. The SDK
+  // registers POST /api/messages (or configured path) and handles JWT
+  // validation + body parsing internally.
+  const { sdk, app } = await loadMSTeamsSdkWithAuth(creds, {
+    httpServerAdapter: new (await import("@microsoft/teams.apps")).ExpressAdapter(expressApp),
+    messagingEndpoint: configuredPath,
+  });
 
   // Build a token provider adapter for Graph API operations
   const tokenProvider = createMSTeamsTokenProvider(app);
-
-  const adapter = createMSTeamsAdapter(app, sdk);
 
   // Build SSO deps when the operator has opted in and a connection name
   // is configured. Leaving `sso` undefined matches the pre-SSO behavior
@@ -250,13 +266,16 @@ export async function monitorMSTeamsProvider(
     });
   }
 
-  // Build a simple ActivityHandler-compatible object
+  // Build a simple ActivityHandler-compatible object and register our
+  // existing dispatch handlers on it. The SDK's App routes all inbound
+  // activities to our handler via app.on('activity', ...).
   const handler = buildActivityHandler();
   registerMSTeamsHandlers(handler, {
     cfg,
     runtime,
     appId,
-    adapter: adapter as unknown as MSTeamsAdapter,
+    app,
+    sdk,
     tokenProvider,
     textLimit,
     mediaMaxBytes,
@@ -266,74 +285,20 @@ export async function monitorMSTeamsProvider(
     sso: ssoDeps,
   });
 
-  // Create Express server
-  const expressApp = express.default();
-
-  // Cheap pre-parse auth gate: reject requests without a Bearer token before
-  // spending CPU/memory on JSON body parsing. This prevents unauthenticated
-  // request floods from forcing body parsing on internet-exposed webhooks.
-  expressApp.use((req: Request, res: Response, next: (err?: unknown) => void) => {
-    const auth = req.headers.authorization;
-    if (!auth || !auth.startsWith("Bearer ")) {
-      res.status(401).json({ error: "Unauthorized" });
-      return;
+  // Catch all inbound activities from the SDK and delegate to our existing
+  // handler dispatch system. The SDK has already validated JWT and parsed the
+  // activity by this point.
+  app.on("activity" as never, async (ctx: unknown) => {
+    try {
+      await handler.run!(ctx);
+    } catch (err) {
+      log.error("msteams webhook failed", { error: formatUnknownError(err) });
     }
-    next();
   });
 
-  // JWT validation — verify Bot Framework tokens using the Teams SDK's
-  // JwtValidator (validates signature via JWKS, audience, issuer, expiration).
-  const jwtValidator = await createBotFrameworkJwtValidator(creds);
-  expressApp.use((req: Request, res: Response, next: (err?: unknown) => void) => {
-    // Authorization header is guaranteed by the pre-parse auth gate above.
-    // `serviceUrl` is optional, so authenticate from headers alone before body
-    // I/O to avoid spending memory and CPU on unauthenticated requests.
-    const authHeader = req.headers.authorization!;
-    jwtValidator
-      .validate(authHeader)
-      .then((valid) => {
-        if (!valid) {
-          log.debug?.("JWT validation failed");
-          res.status(401).json({ error: "Unauthorized" });
-          return;
-        }
-        next();
-      })
-      .catch((err) => {
-        log.debug?.(`JWT validation error: ${formatUnknownError(err)}`);
-        res.status(401).json({ error: "Unauthorized" });
-      });
-  });
-
-  expressApp.use(express.json({ limit: MSTEAMS_WEBHOOK_MAX_BODY_BYTES }));
-  expressApp.use((err: unknown, _req: Request, res: Response, next: (err?: unknown) => void) => {
-    if (err && typeof err === "object" && "status" in err && err.status === 413) {
-      res.status(413).json({ error: "Payload too large" });
-      return;
-    }
-    next(err);
-  });
-
-  // Set up the messages endpoint - use configured path and /api/messages as fallback
-  const configuredPath = msteamsCfg.webhook?.path ?? "/api/messages";
-  const messageHandler = (req: Request, res: Response) => {
-    void adapter
-      .process(req, res, (context: unknown) => handler.run!(context))
-      .catch((err: unknown) => {
-        log.error("msteams webhook failed", { error: formatUnknownError(err) });
-      });
-  };
-
-  // Listen on configured path and /api/messages (standard Bot Framework path)
-  expressApp.post(configuredPath, messageHandler);
-  if (configuredPath !== "/api/messages") {
-    expressApp.post("/api/messages", messageHandler);
-  }
-
-  log.debug?.("listening on paths", {
-    primary: configuredPath,
-    fallback: "/api/messages",
-  });
+  // Initialize the SDK App — registers the POST route on Express and sets up
+  // JWT validation middleware internally.
+  await app.initialize();
 
   // Start listening and fail fast if bind/listen fails.
   const httpServer = expressApp.listen(port);

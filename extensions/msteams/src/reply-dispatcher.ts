@@ -16,11 +16,12 @@ import {
 } from "./errors.js";
 import {
   buildConversationReference,
-  type MSTeamsAdapter,
   type MSTeamsRenderedMessage,
   renderReplyPayloadsToMessages,
   sendMSTeamsMessages,
 } from "./messenger.js";
+import type { MSTeamsApp, MSTeamsTeamsSdk } from "./sdk.js";
+import { createProactiveSendContext } from "./sdk.js";
 import type { MSTeamsMonitorLogger } from "./monitor-types.js";
 import { createTeamsReplyStreamController } from "./reply-stream-controller.js";
 import { withRevokedProxyFallback } from "./revoked-context.js";
@@ -36,7 +37,8 @@ export function createMSTeamsReplyDispatcher(params: {
   accountId?: string;
   runtime: RuntimeEnv;
   log: MSTeamsMonitorLogger;
-  adapter: MSTeamsAdapter;
+  app: MSTeamsApp;
+  sdk: MSTeamsTeamsSdk;
   appId: string;
   conversationRef: StoredConversationReference;
   context: MSTeamsTurnContext;
@@ -84,13 +86,16 @@ export function createMSTeamsReplyDispatcher(params: {
       },
       onRevoked: async () => {
         const baseRef = buildConversationReference(params.conversationRef);
-        await params.adapter.continueConversation(
-          params.appId,
-          { ...baseRef, activityId: undefined },
-          async (ctx) => {
-            await ctx.sendActivity({ type: "typing" });
-          },
-        );
+        const ctx = createProactiveSendContext({
+          sdk: params.sdk,
+          app: params.app,
+          serviceUrl: baseRef.serviceUrl ?? "",
+          conversationId: baseRef.conversation.id,
+          conversationType: baseRef.conversation.conversationType,
+          bot: baseRef.agent ?? undefined,
+          tenantId: baseRef.tenantId,
+        });
+        await ctx.sendActivity({ type: "typing" });
       },
       onRevokedLog: () => {
         params.log.debug?.("turn context revoked, sending typing via proactive messaging");
@@ -161,7 +166,8 @@ export function createMSTeamsReplyDispatcher(params: {
   const sendMessages = async (messages: MSTeamsRenderedMessage[]): Promise<string[]> => {
     return sendMSTeamsMessages({
       replyStyle: params.replyStyle,
-      adapter: params.adapter,
+      app: params.app,
+      sdk: params.sdk,
       appId: params.appId,
       conversationRef: params.conversationRef,
       context: params.context,

@@ -17,6 +17,8 @@ const mockState = vi.hoisted(() => ({
   uploadAndShareSharePoint: vi.fn(),
   getDriveItemProperties: vi.fn(),
   buildTeamsFileInfoCard: vi.fn(),
+  createProactiveSendContext: vi.fn(),
+  createMSTeamsTokenProvider: vi.fn(),
 }));
 
 vi.mock("openclaw/plugin-sdk/msteams", () => ({
@@ -52,7 +54,16 @@ vi.mock("./media-helpers.js", () => ({
 
 vi.mock("./messenger.js", () => ({
   sendMSTeamsMessages: mockState.sendMSTeamsMessages,
-  buildConversationReference: () => ({}),
+  buildConversationReference: (ref: Record<string, unknown>) => ({
+    serviceUrl: (ref as { serviceUrl?: string }).serviceUrl ?? "https://service.example.com",
+    conversation: (ref as { conversation?: Record<string, unknown> }).conversation ?? {
+      id: "19:conversation@thread.tacv2",
+    },
+    agent: (ref as { agent?: Record<string, unknown> }).agent,
+    user: (ref as { user?: Record<string, unknown> }).user,
+    tenantId: (ref as { tenantId?: string }).tenantId,
+    aadObjectId: (ref as { aadObjectId?: string }).aadObjectId,
+  }),
 }));
 
 vi.mock("./runtime.js", () => ({
@@ -76,10 +87,20 @@ vi.mock("./graph-chat.js", () => ({
   buildTeamsFileInfoCard: mockState.buildTeamsFileInfoCard,
 }));
 
-function mockContinueConversationFailure(error: string) {
-  const mockContinueConversation = vi.fn().mockRejectedValue(new Error(error));
+vi.mock("./sdk.js", () => ({
+  createProactiveSendContext: mockState.createProactiveSendContext,
+  createMSTeamsTokenProvider: mockState.createMSTeamsTokenProvider,
+}));
+
+function mockProactiveSendContextFailure(error: string) {
+  mockState.createProactiveSendContext.mockReturnValue({
+    sendActivity: vi.fn().mockRejectedValue(new Error(error)),
+    updateActivity: vi.fn().mockRejectedValue(new Error(error)),
+    deleteActivity: vi.fn().mockRejectedValue(new Error(error)),
+  });
   mockState.resolveMSTeamsSendContext.mockResolvedValue({
-    adapter: { continueConversation: mockContinueConversation },
+    app: {},
+    sdk: {},
     appId: "app-id",
     conversationId: "19:conversation@thread.tacv2",
     ref: {
@@ -92,7 +113,6 @@ function mockContinueConversationFailure(error: string) {
     conversationType: "personal",
     tokenProvider: {},
   });
-  return mockContinueConversation;
 }
 
 function createSharePointSendContext(params: {
@@ -101,15 +121,8 @@ function createSharePointSendContext(params: {
   siteId: string;
 }) {
   return {
-    adapter: {
-      continueConversation: vi.fn(
-        async (
-          _id: string,
-          _ref: unknown,
-          fn: (ctx: { sendActivity: () => { id: "msg-1" } }) => Promise<void>,
-        ) => fn({ sendActivity: () => ({ id: "msg-1" }) }),
-      ),
-    },
+    app: {},
+    sdk: {},
     appId: "app-id",
     conversationId: params.conversationId,
     graphChatId: params.graphChatId,
@@ -177,8 +190,15 @@ describe("sendMessageMSTeams", () => {
 
     mockState.extractFilename.mockResolvedValue("fallback.bin");
     mockState.requiresFileConsent.mockReturnValue(false);
+    mockState.createProactiveSendContext.mockReset();
+    mockState.createProactiveSendContext.mockReturnValue({
+      sendActivity: vi.fn(async () => ({ id: "message-1" })),
+      updateActivity: vi.fn(async () => ({ id: "updated" })),
+      deleteActivity: vi.fn(async () => {}),
+    });
     mockState.resolveMSTeamsSendContext.mockResolvedValue({
-      adapter: {},
+      app: {},
+      sdk: {},
       appId: "app-id",
       conversationId: "19:conversation@thread.tacv2",
       ref: {},
@@ -329,21 +349,19 @@ describe("sendMessageMSTeams", () => {
 describe("editMessageMSTeams", () => {
   beforeEach(() => {
     mockState.resolveMSTeamsSendContext.mockReset();
+    mockState.createProactiveSendContext.mockReset();
   });
 
-  it("calls continueConversation and updateActivity with correct params", async () => {
-    const mockUpdateActivity = vi.fn();
-    const mockContinueConversation = vi.fn(
-      async (_appId: string, _ref: unknown, logic: (ctx: unknown) => Promise<void>) => {
-        await logic({
-          sendActivity: vi.fn(),
-          updateActivity: mockUpdateActivity,
-          deleteActivity: vi.fn(),
-        });
-      },
-    );
+  it("calls createProactiveSendContext and updateActivity with correct params", async () => {
+    const mockUpdateActivity = vi.fn(async () => ({ id: "updated" }));
+    mockState.createProactiveSendContext.mockReturnValue({
+      sendActivity: vi.fn(async () => ({ id: "ok" })),
+      updateActivity: mockUpdateActivity,
+      deleteActivity: vi.fn(async () => {}),
+    });
     mockState.resolveMSTeamsSendContext.mockResolvedValue({
-      adapter: { continueConversation: mockContinueConversation },
+      app: {},
+      sdk: {},
       appId: "app-id",
       conversationId: "19:conversation@thread.tacv2",
       ref: {
@@ -365,12 +383,7 @@ describe("editMessageMSTeams", () => {
     });
 
     expect(result.conversationId).toBe("19:conversation@thread.tacv2");
-    expect(mockContinueConversation).toHaveBeenCalledTimes(1);
-    expect(mockContinueConversation).toHaveBeenCalledWith(
-      "app-id",
-      expect.objectContaining({ activityId: undefined }),
-      expect.any(Function),
-    );
+    expect(mockState.createProactiveSendContext).toHaveBeenCalledTimes(1);
     expect(mockUpdateActivity).toHaveBeenCalledWith({
       type: "message",
       id: "activity-123",
@@ -378,8 +391,8 @@ describe("editMessageMSTeams", () => {
     });
   });
 
-  it("throws a descriptive error when continueConversation fails", async () => {
-    mockContinueConversationFailure("Service unavailable");
+  it("throws a descriptive error when proactive send context fails", async () => {
+    mockProactiveSendContextFailure("Service unavailable");
 
     await expect(
       editMessageMSTeams({
@@ -395,21 +408,19 @@ describe("editMessageMSTeams", () => {
 describe("deleteMessageMSTeams", () => {
   beforeEach(() => {
     mockState.resolveMSTeamsSendContext.mockReset();
+    mockState.createProactiveSendContext.mockReset();
   });
 
-  it("calls continueConversation and deleteActivity with correct activityId", async () => {
-    const mockDeleteActivity = vi.fn();
-    const mockContinueConversation = vi.fn(
-      async (_appId: string, _ref: unknown, logic: (ctx: unknown) => Promise<void>) => {
-        await logic({
-          sendActivity: vi.fn(),
-          updateActivity: vi.fn(),
-          deleteActivity: mockDeleteActivity,
-        });
-      },
-    );
+  it("calls createProactiveSendContext and deleteActivity with correct activityId", async () => {
+    const mockDeleteActivity = vi.fn(async () => {});
+    mockState.createProactiveSendContext.mockReturnValue({
+      sendActivity: vi.fn(async () => ({ id: "ok" })),
+      updateActivity: vi.fn(async () => ({ id: "updated" })),
+      deleteActivity: mockDeleteActivity,
+    });
     mockState.resolveMSTeamsSendContext.mockResolvedValue({
-      adapter: { continueConversation: mockContinueConversation },
+      app: {},
+      sdk: {},
       appId: "app-id",
       conversationId: "19:conversation@thread.tacv2",
       ref: {
@@ -430,17 +441,12 @@ describe("deleteMessageMSTeams", () => {
     });
 
     expect(result.conversationId).toBe("19:conversation@thread.tacv2");
-    expect(mockContinueConversation).toHaveBeenCalledTimes(1);
-    expect(mockContinueConversation).toHaveBeenCalledWith(
-      "app-id",
-      expect.objectContaining({ activityId: undefined }),
-      expect.any(Function),
-    );
+    expect(mockState.createProactiveSendContext).toHaveBeenCalledTimes(1);
     expect(mockDeleteActivity).toHaveBeenCalledWith("activity-456");
   });
 
-  it("throws a descriptive error when continueConversation fails", async () => {
-    mockContinueConversationFailure("Not found");
+  it("throws a descriptive error when proactive send context fails", async () => {
+    mockProactiveSendContextFailure("Not found");
 
     await expect(
       deleteMessageMSTeams({
@@ -451,18 +457,16 @@ describe("deleteMessageMSTeams", () => {
     ).rejects.toThrow("msteams delete failed");
   });
 
-  it("passes the appId and proactive ref to continueConversation", async () => {
-    const mockContinueConversation = vi.fn(
-      async (_appId: string, _ref: unknown, logic: (ctx: unknown) => Promise<void>) => {
-        await logic({
-          sendActivity: vi.fn(),
-          updateActivity: vi.fn(),
-          deleteActivity: vi.fn(),
-        });
-      },
-    );
+  it("passes app and sdk to createProactiveSendContext", async () => {
+    const mockDeleteActivity = vi.fn(async () => {});
+    mockState.createProactiveSendContext.mockReturnValue({
+      sendActivity: vi.fn(async () => ({ id: "ok" })),
+      updateActivity: vi.fn(async () => ({ id: "updated" })),
+      deleteActivity: mockDeleteActivity,
+    });
     mockState.resolveMSTeamsSendContext.mockResolvedValue({
-      adapter: { continueConversation: mockContinueConversation },
+      app: { _marker: "test-app" },
+      sdk: { _marker: "test-sdk" },
       appId: "my-app-id",
       conversationId: "19:conv@thread.tacv2",
       ref: {
@@ -483,11 +487,12 @@ describe("deleteMessageMSTeams", () => {
       activityId: "activity-789",
     });
 
-    // appId should be forwarded correctly
-    expect(mockContinueConversation.mock.calls[0]?.[0]).toBe("my-app-id");
-    // activityId on the proactive ref should be cleared (undefined) — proactive pattern
-    expect(mockContinueConversation.mock.calls[0]?.[1]).toMatchObject({
-      activityId: undefined,
-    });
+    // createProactiveSendContext should receive app and sdk from the resolved context
+    expect(mockState.createProactiveSendContext).toHaveBeenCalledWith(
+      expect.objectContaining({
+        app: { _marker: "test-app" },
+        sdk: { _marker: "test-sdk" },
+      }),
+    );
   });
 });

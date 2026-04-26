@@ -299,7 +299,8 @@ async function handleFeedbackInvoke(
     // provides additional signal.
     runFeedbackReflection({
       cfg: deps.cfg,
-      adapter: deps.adapter,
+      app: deps.app,
+      sdk: deps.sdk,
       appId: deps.appId,
       conversationRef,
       sessionKey: route.sessionKey,
@@ -336,7 +337,7 @@ export function registerMSTeamsHandlers<T extends MSTeamsActivityHandler>(
 
       // Handle feedback invokes (thumbs up/down on AI-generated messages).
       // Just return after handling — the process() handler sends HTTP 200 automatically.
-      // Do NOT call sendActivity with invokeResponse; our custom adapter would POST
+      // Do NOT call sendActivity with invokeResponse; the SDK would POST
       // a new activity to Bot Framework instead of responding to the HTTP request.
       if (ctx.activity?.type === "invoke" && ctx.activity?.name === "message/submitAction") {
         const handled = await handleFeedbackInvoke(ctx, deps);

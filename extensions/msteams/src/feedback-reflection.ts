@@ -26,8 +26,9 @@ import {
   recordReflectionTime,
   storeSessionLearning,
 } from "./feedback-reflection-store.js";
-import type { MSTeamsAdapter } from "./messenger.js";
 import { buildConversationReference } from "./messenger.js";
+import type { MSTeamsApp, MSTeamsTeamsSdk } from "./sdk.js";
+import { createProactiveSendContext } from "./sdk.js";
 import type { MSTeamsMonitorLogger } from "./monitor-types.js";
 import { getMSTeamsRuntime } from "./runtime.js";
 
@@ -67,7 +68,8 @@ export function buildFeedbackEvent(params: {
 
 export type RunFeedbackReflectionParams = {
   cfg: OpenClawConfig;
-  adapter: MSTeamsAdapter;
+  app: MSTeamsApp;
+  sdk: MSTeamsTeamsSdk;
   appId: string;
   conversationRef: StoredConversationReference;
   sessionKey: string;
@@ -151,20 +153,24 @@ function createReflectionCaptureDispatcher(params: {
 }
 
 async function sendReflectionFollowUp(params: {
-  adapter: MSTeamsAdapter;
-  appId: string;
+  app: MSTeamsApp;
+  sdk: MSTeamsTeamsSdk;
   conversationRef: StoredConversationReference;
   userMessage: string;
 }): Promise<void> {
   const baseRef = buildConversationReference(params.conversationRef);
-  const proactiveRef = { ...baseRef, activityId: undefined };
-
-  await params.adapter.continueConversation(params.appId, proactiveRef, async (ctx) => {
-    await ctx.sendActivity({
-      type: "message",
-      text: params.userMessage,
-    });
+  const ctx = createProactiveSendContext({
+    sdk: params.sdk,
+    app: params.app,
+    serviceUrl: baseRef.serviceUrl ?? "",
+    conversationId: baseRef.conversation.id,
+    conversationType: baseRef.conversation.conversationType,
+    bot: baseRef.agent ?? undefined,
+    tenantId: baseRef.tenantId,
+    recipientId: baseRef.user?.id,
+    recipientAadObjectId: baseRef.aadObjectId ?? baseRef.user?.aadObjectId,
   });
+  await ctx.sendActivity({ type: "message", text: params.userMessage });
 }
 
 /**
@@ -262,8 +268,8 @@ export async function runFeedbackReflection(params: RunFeedbackReflectionParams)
 
   try {
     await sendReflectionFollowUp({
-      adapter: params.adapter,
-      appId: params.appId,
+      app: params.app,
+      sdk: params.sdk,
       conversationRef: params.conversationRef,
       userMessage: parsedReflection.userMessage!,
     });

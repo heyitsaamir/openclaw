@@ -38,11 +38,8 @@ const MSTEAMS_MAX_MEDIA_BYTES = 100 * 1024 * 1024;
  */
 const FILE_CONSENT_THRESHOLD_BYTES = 4 * 1024 * 1024;
 
-type SendContext = {
-  sendActivity: (textOrActivity: string | object) => Promise<unknown>;
-  updateActivity: (activity: object) => Promise<{ id?: string } | void>;
-  deleteActivity: (activityId: string) => Promise<void>;
-};
+import type { MSTeamsApp, MSTeamsSendContext, MSTeamsTeamsSdk } from "./sdk.js";
+import { createProactiveSendContext } from "./sdk.js";
 
 export type MSTeamsConversationReference = {
   activityId?: string;
@@ -64,21 +61,6 @@ export type MSTeamsConversationReference = {
    * Bot Framework can resolve the personal DM recipient on the connector side.
    */
   aadObjectId?: string;
-};
-
-export type MSTeamsAdapter = {
-  continueConversation: (
-    appId: string,
-    reference: MSTeamsConversationReference,
-    logic: (context: SendContext) => Promise<void>,
-  ) => Promise<void>;
-  process: (
-    req: unknown,
-    res: unknown,
-    logic: (context: unknown) => Promise<void>,
-  ) => Promise<void>;
-  updateActivity: (context: unknown, activity: object) => Promise<void>;
-  deleteActivity: (context: unknown, reference: { activityId?: string }) => Promise<void>;
 };
 
 export type MSTeamsReplyRenderOptions = {
@@ -423,10 +405,11 @@ export async function buildActivity(
 
 export async function sendMSTeamsMessages(params: {
   replyStyle: MSTeamsReplyStyle;
-  adapter: MSTeamsAdapter;
+  app: MSTeamsApp;
+  sdk: MSTeamsTeamsSdk;
   appId: string;
   conversationRef: StoredConversationReference;
-  context?: SendContext;
+  context?: MSTeamsSendContext;
   messages: MSTeamsRenderedMessage[];
   retry?: false | MSTeamsSendRetryOptions;
   onRetry?: (event: MSTeamsSendRetryEvent) => void;
@@ -485,7 +468,7 @@ export async function sendMSTeamsMessages(params: {
   };
 
   const sendMessageInContext = async (
-    ctx: SendContext,
+    ctx: MSTeamsSendContext,
     message: MSTeamsRenderedMessage,
     messageIndex: number,
   ): Promise<string> => {
@@ -526,7 +509,7 @@ export async function sendMSTeamsMessages(params: {
   };
 
   const sendMessageBatchInContext = async (
-    ctx: SendContext,
+    ctx: MSTeamsSendContext,
     batch: MSTeamsRenderedMessage[],
     startIndex: number,
   ): Promise<string[]> => {
@@ -557,11 +540,18 @@ export async function sendMSTeamsMessages(params: {
       conversation: { ...baseRef.conversation, id: conversationId },
     };
 
-    const messageIds: string[] = [];
-    await params.adapter.continueConversation(params.appId, proactiveRef, async (ctx) => {
-      messageIds.push(...(await sendMessageBatchInContext(ctx, batch, startIndex)));
+    const ctx = createProactiveSendContext({
+      sdk: params.sdk,
+      app: params.app,
+      serviceUrl: proactiveRef.serviceUrl ?? "",
+      conversationId: proactiveRef.conversation.id,
+      conversationType: proactiveRef.conversation.conversationType,
+      bot: proactiveRef.agent ?? undefined,
+      tenantId: proactiveRef.tenantId,
+      recipientId: proactiveRef.user?.id,
+      recipientAadObjectId: proactiveRef.aadObjectId ?? proactiveRef.user?.aadObjectId,
     });
-    return messageIds;
+    return await sendMessageBatchInContext(ctx, batch, startIndex);
   };
 
   // Resolve the thread root message ID for channel thread routing.

@@ -242,7 +242,7 @@ export async function monitorMSTeamsProvider(
   // Lazy-load the SDK and create the App with ExpressAdapter. The SDK
   // registers POST /api/messages (or configured path) and handles JWT
   // validation + body parsing internally.
-  const { sdk, app } = await loadMSTeamsSdkWithAuth(creds, {
+  const { app } = await loadMSTeamsSdkWithAuth(creds, {
     httpServerAdapter: new (await import("@microsoft/teams.apps")).ExpressAdapter(expressApp),
     messagingEndpoint: configuredPath,
   });
@@ -275,7 +275,6 @@ export async function monitorMSTeamsProvider(
     runtime,
     appId,
     app,
-    sdk,
     tokenProvider,
     textLimit,
     mediaMaxBytes,

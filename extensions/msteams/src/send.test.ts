@@ -100,7 +100,6 @@ function mockProactiveSendContextFailure(error: string) {
   });
   mockState.resolveMSTeamsSendContext.mockResolvedValue({
     app: {},
-    sdk: {},
     appId: "app-id",
     conversationId: "19:conversation@thread.tacv2",
     ref: {
@@ -122,7 +121,6 @@ function createSharePointSendContext(params: {
 }) {
   return {
     app: {},
-    sdk: {},
     appId: "app-id",
     conversationId: params.conversationId,
     graphChatId: params.graphChatId,
@@ -198,7 +196,6 @@ describe("sendMessageMSTeams", () => {
     });
     mockState.resolveMSTeamsSendContext.mockResolvedValue({
       app: {},
-      sdk: {},
       appId: "app-id",
       conversationId: "19:conversation@thread.tacv2",
       ref: {},
@@ -361,7 +358,6 @@ describe("editMessageMSTeams", () => {
     });
     mockState.resolveMSTeamsSendContext.mockResolvedValue({
       app: {},
-      sdk: {},
       appId: "app-id",
       conversationId: "19:conversation@thread.tacv2",
       ref: {
@@ -420,7 +416,6 @@ describe("deleteMessageMSTeams", () => {
     });
     mockState.resolveMSTeamsSendContext.mockResolvedValue({
       app: {},
-      sdk: {},
       appId: "app-id",
       conversationId: "19:conversation@thread.tacv2",
       ref: {
@@ -457,7 +452,7 @@ describe("deleteMessageMSTeams", () => {
     ).rejects.toThrow("msteams delete failed");
   });
 
-  it("passes app and sdk to createProactiveSendContext", async () => {
+  it("passes app to createProactiveSendContext", async () => {
     const mockDeleteActivity = vi.fn(async () => {});
     mockState.createProactiveSendContext.mockReturnValue({
       sendActivity: vi.fn(async () => ({ id: "ok" })),
@@ -466,7 +461,6 @@ describe("deleteMessageMSTeams", () => {
     });
     mockState.resolveMSTeamsSendContext.mockResolvedValue({
       app: { _marker: "test-app" },
-      sdk: { _marker: "test-sdk" },
       appId: "my-app-id",
       conversationId: "19:conv@thread.tacv2",
       ref: {
@@ -487,11 +481,10 @@ describe("deleteMessageMSTeams", () => {
       activityId: "activity-789",
     });
 
-    // createProactiveSendContext should receive app and sdk from the resolved context
+    // createProactiveSendContext should receive app from the resolved context
     expect(mockState.createProactiveSendContext).toHaveBeenCalledWith(
       expect.objectContaining({
         app: { _marker: "test-app" },
-        sdk: { _marker: "test-sdk" },
       }),
     );
   });

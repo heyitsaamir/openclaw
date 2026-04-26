@@ -109,7 +109,6 @@ export async function sendMessageMSTeams(
   const ctx = await resolveMSTeamsSendContext({ cfg, to });
   const {
     app,
-    sdk,
     appId,
     conversationId,
     ref,
@@ -171,7 +170,6 @@ export async function sendMessageMSTeams(
 
       const messageId = await sendProactiveActivity({
         app,
-        sdk,
         ref,
         activity,
         errorPrefix: "msteams consent card send",
@@ -256,7 +254,6 @@ export async function sendMessageMSTeams(
         };
         const messageId = await sendProactiveActivityRaw({
           app,
-          sdk,
           ref,
           activity,
         });
@@ -296,7 +293,6 @@ export async function sendMessageMSTeams(
       };
       const messageId = await sendProactiveActivityRaw({
         app,
-        sdk,
         ref,
         activity,
       });
@@ -333,7 +329,6 @@ async function sendTextWithMedia(
 ): Promise<SendMSTeamsMessageResult> {
   const {
     app,
-    sdk,
     appId,
     conversationId,
     ref,
@@ -348,7 +343,6 @@ async function sendTextWithMedia(
     messageIds = await sendMSTeamsMessages({
       replyStyle: "top-level",
       app,
-      sdk,
       appId,
       conversationRef: ref,
       messages: [{ text: text || undefined, mediaUrl }],
@@ -381,7 +375,6 @@ async function sendTextWithMedia(
 
 type ProactiveActivityParams = {
   app: MSTeamsProactiveContext["app"];
-  sdk: MSTeamsProactiveContext["sdk"];
   ref: MSTeamsProactiveContext["ref"];
   activity: Record<string, unknown>;
   errorPrefix: string;
@@ -391,13 +384,11 @@ type ProactiveActivityRawParams = Omit<ProactiveActivityParams, "errorPrefix">;
 
 async function sendProactiveActivityRaw({
   app,
-  sdk,
   ref,
   activity,
 }: ProactiveActivityRawParams): Promise<string> {
   const baseRef = buildConversationReference(ref);
   const ctx = createProactiveSendContext({
-    sdk,
     app,
     serviceUrl: baseRef.serviceUrl ?? "",
     conversationId: baseRef.conversation.id,
@@ -413,13 +404,12 @@ async function sendProactiveActivityRaw({
 
 async function sendProactiveActivity({
   app,
-  sdk,
   ref,
   activity,
   errorPrefix,
 }: ProactiveActivityParams): Promise<string> {
   try {
-    return await sendProactiveActivityRaw({ app, sdk, ref, activity });
+    return await sendProactiveActivityRaw({ app, ref, activity });
   } catch (err) {
     const classification = classifyMSTeamsSendError(err);
     const hint = formatMSTeamsSendErrorHint(classification);
@@ -438,7 +428,7 @@ export async function sendPollMSTeams(
   params: SendMSTeamsPollParams,
 ): Promise<SendMSTeamsPollResult> {
   const { cfg, to, question, options, maxSelections } = params;
-  const { app, sdk, appId, conversationId, ref, log } = await resolveMSTeamsSendContext({
+  const { app, appId, conversationId, ref, log } = await resolveMSTeamsSendContext({
     cfg,
     to,
   });
@@ -468,7 +458,6 @@ export async function sendPollMSTeams(
   // Send poll via proactive conversation (Adaptive Cards require direct activity send)
   const messageId = await sendProactiveActivity({
     app,
-    sdk,
     ref,
     activity,
     errorPrefix: "msteams poll send",
@@ -490,7 +479,7 @@ export async function sendAdaptiveCardMSTeams(
   params: SendMSTeamsCardParams,
 ): Promise<SendMSTeamsCardResult> {
   const { cfg, to, card } = params;
-  const { app, sdk, appId, conversationId, ref, log } = await resolveMSTeamsSendContext({
+  const { app, appId, conversationId, ref, log } = await resolveMSTeamsSendContext({
     cfg,
     to,
   });
@@ -514,7 +503,6 @@ export async function sendAdaptiveCardMSTeams(
   // Send card via proactive conversation
   const messageId = await sendProactiveActivity({
     app,
-    sdk,
     ref,
     activity,
     errorPrefix: "msteams card send",
@@ -566,7 +554,7 @@ export async function editMessageMSTeams(
   params: EditMSTeamsMessageParams,
 ): Promise<EditMSTeamsMessageResult> {
   const { cfg, to, activityId, text } = params;
-  const { app, sdk, appId, conversationId, ref, log } = await resolveMSTeamsSendContext({
+  const { app, appId, conversationId, ref, log } = await resolveMSTeamsSendContext({
     cfg,
     to,
   });
@@ -578,7 +566,6 @@ export async function editMessageMSTeams(
 
   try {
     const ctx = createProactiveSendContext({
-      sdk,
       app,
       serviceUrl: baseRef.serviceUrl ?? "",
       conversationId: baseRef.conversation.id,
@@ -616,7 +603,7 @@ export async function deleteMessageMSTeams(
   params: DeleteMSTeamsMessageParams,
 ): Promise<DeleteMSTeamsMessageResult> {
   const { cfg, to, activityId } = params;
-  const { app, sdk, appId, conversationId, ref, log } = await resolveMSTeamsSendContext({
+  const { app, appId, conversationId, ref, log } = await resolveMSTeamsSendContext({
     cfg,
     to,
   });
@@ -628,7 +615,6 @@ export async function deleteMessageMSTeams(
 
   try {
     const ctx = createProactiveSendContext({
-      sdk,
       app,
       serviceUrl: baseRef.serviceUrl ?? "",
       conversationId: baseRef.conversation.id,

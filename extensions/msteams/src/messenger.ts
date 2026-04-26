@@ -38,7 +38,7 @@ const MSTEAMS_MAX_MEDIA_BYTES = 100 * 1024 * 1024;
  */
 const FILE_CONSENT_THRESHOLD_BYTES = 4 * 1024 * 1024;
 
-import type { MSTeamsApp, MSTeamsSendContext, MSTeamsTeamsSdk } from "./sdk.js";
+import type { MSTeamsApp, MSTeamsSendContext } from "./sdk.js";
 import { createProactiveSendContext } from "./sdk.js";
 
 export type MSTeamsConversationReference = {
@@ -406,7 +406,6 @@ export async function buildActivity(
 export async function sendMSTeamsMessages(params: {
   replyStyle: MSTeamsReplyStyle;
   app: MSTeamsApp;
-  sdk: MSTeamsTeamsSdk;
   appId: string;
   conversationRef: StoredConversationReference;
   context?: MSTeamsSendContext;
@@ -541,7 +540,6 @@ export async function sendMSTeamsMessages(params: {
     };
 
     const ctx = createProactiveSendContext({
-      sdk: params.sdk,
       app: params.app,
       serviceUrl: proactiveRef.serviceUrl ?? "",
       conversationId: proactiveRef.conversation.id,

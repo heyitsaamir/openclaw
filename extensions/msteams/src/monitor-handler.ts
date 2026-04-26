@@ -300,7 +300,6 @@ async function handleFeedbackInvoke(
     runFeedbackReflection({
       cfg: deps.cfg,
       app: deps.app,
-      sdk: deps.sdk,
       appId: deps.appId,
       conversationRef,
       sessionKey: route.sessionKey,

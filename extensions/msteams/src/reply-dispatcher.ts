@@ -20,7 +20,7 @@ import {
   renderReplyPayloadsToMessages,
   sendMSTeamsMessages,
 } from "./messenger.js";
-import type { MSTeamsApp, MSTeamsTeamsSdk } from "./sdk.js";
+import type { MSTeamsApp } from "./sdk.js";
 import { createProactiveSendContext } from "./sdk.js";
 import type { MSTeamsMonitorLogger } from "./monitor-types.js";
 import { createTeamsReplyStreamController } from "./reply-stream-controller.js";
@@ -38,7 +38,6 @@ export function createMSTeamsReplyDispatcher(params: {
   runtime: RuntimeEnv;
   log: MSTeamsMonitorLogger;
   app: MSTeamsApp;
-  sdk: MSTeamsTeamsSdk;
   appId: string;
   conversationRef: StoredConversationReference;
   context: MSTeamsTurnContext;
@@ -87,7 +86,6 @@ export function createMSTeamsReplyDispatcher(params: {
       onRevoked: async () => {
         const baseRef = buildConversationReference(params.conversationRef);
         const ctx = createProactiveSendContext({
-          sdk: params.sdk,
           app: params.app,
           serviceUrl: baseRef.serviceUrl ?? "",
           conversationId: baseRef.conversation.id,
@@ -167,7 +165,6 @@ export function createMSTeamsReplyDispatcher(params: {
     return sendMSTeamsMessages({
       replyStyle: params.replyStyle,
       app: params.app,
-      sdk: params.sdk,
       appId: params.appId,
       conversationRef: params.conversationRef,
       context: params.context,

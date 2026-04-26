@@ -27,7 +27,7 @@ import {
   storeSessionLearning,
 } from "./feedback-reflection-store.js";
 import { buildConversationReference } from "./messenger.js";
-import type { MSTeamsApp, MSTeamsTeamsSdk } from "./sdk.js";
+import type { MSTeamsApp } from "./sdk.js";
 import { createProactiveSendContext } from "./sdk.js";
 import type { MSTeamsMonitorLogger } from "./monitor-types.js";
 import { getMSTeamsRuntime } from "./runtime.js";
@@ -69,7 +69,6 @@ export function buildFeedbackEvent(params: {
 export type RunFeedbackReflectionParams = {
   cfg: OpenClawConfig;
   app: MSTeamsApp;
-  sdk: MSTeamsTeamsSdk;
   appId: string;
   conversationRef: StoredConversationReference;
   sessionKey: string;
@@ -154,13 +153,11 @@ function createReflectionCaptureDispatcher(params: {
 
 async function sendReflectionFollowUp(params: {
   app: MSTeamsApp;
-  sdk: MSTeamsTeamsSdk;
   conversationRef: StoredConversationReference;
   userMessage: string;
 }): Promise<void> {
   const baseRef = buildConversationReference(params.conversationRef);
   const ctx = createProactiveSendContext({
-    sdk: params.sdk,
     app: params.app,
     serviceUrl: baseRef.serviceUrl ?? "",
     conversationId: baseRef.conversation.id,
@@ -269,7 +266,6 @@ export async function runFeedbackReflection(params: RunFeedbackReflectionParams)
   try {
     await sendReflectionFollowUp({
       app: params.app,
-      sdk: params.sdk,
       conversationRef: params.conversationRef,
       userMessage: parsedReflection.userMessage!,
     });

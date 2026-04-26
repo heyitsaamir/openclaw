@@ -25,7 +25,7 @@ import {
   sendMSTeamsMessages,
 } from "./messenger.js";
 import { setMSTeamsRuntime } from "./runtime.js";
-import type { MSTeamsApp, MSTeamsSendContext, MSTeamsTeamsSdk } from "./sdk.js";
+import type { MSTeamsApp, MSTeamsSendContext } from "./sdk.js";
 
 const chunkMarkdownText = (text: string, limit: number) => {
   if (!text) {
@@ -89,48 +89,34 @@ function requireSentMessage(sent: Array<{ text?: string; entities?: unknown[] }>
   return firstSent;
 }
 
-function createMockApp(): MSTeamsApp {
-  return {
-    tokenManager: {
-      getBotToken: async () => ({ toString: () => "bot-token" }),
-      getGraphToken: async () => ({ toString: () => "graph-token" }),
-    },
-  } as unknown as MSTeamsApp;
-}
-
-type MockSdkOptions = {
+type MockAppOptions = {
   createFn?: (activity: unknown) => Promise<unknown>;
   onClientCreated?: (serviceUrl: string, conversationId: string) => void;
 };
 
-function createMockSdk(opts?: MockSdkOptions): MSTeamsTeamsSdk {
+function createMockApp(opts?: MockAppOptions): MSTeamsApp {
   const createFn = opts?.createFn ?? (async (activity: unknown) => {
     const text = (activity as Record<string, unknown>)?.text;
     return { id: typeof text === "string" ? `id:${text}` : "created" };
   });
   return {
-    App: class {} as unknown as MSTeamsTeamsSdk["App"],
-    Client: class {
-      _serviceUrl: string;
-      constructor(serviceUrl: string) {
-        this._serviceUrl = serviceUrl;
-      }
-      conversations = {
+    tokenManager: {
+      getBotToken: async () => ({ toString: () => "bot-token" }),
+      getGraphToken: async () => ({ toString: () => "graph-token" }),
+    },
+    api: {
+      conversations: {
         activities: (conversationId: string) => {
-          opts?.onClientCreated?.(
-            (this as unknown as { _serviceUrl: string })._serviceUrl,
-            conversationId,
-          );
+          opts?.onClientCreated?.("", conversationId);
           return {
             create: createFn,
             update: async (_id: string, activity: unknown) => ({ id: (activity as Record<string, unknown>)?.id ?? "updated" }),
             delete: async () => {},
           };
         },
-      };
-    } as unknown as MSTeamsTeamsSdk["Client"],
-    ExpressAdapter: class {} as unknown as MSTeamsTeamsSdk["ExpressAdapter"],
-  };
+      },
+    },
+  } as unknown as MSTeamsApp;
 }
 
 const noopUpdateActivity = async () => ({ id: "updated" });
@@ -240,8 +226,7 @@ describe("msteams messenger", () => {
 
       await sendMSTeamsMessages({
         replyStyle: "thread",
-        app: createMockApp(),
-        sdk: createMockSdk({
+        app: createMockApp({
           createFn: createRecordedSendActivity(proactiveSent),
           onClientCreated: (_serviceUrl, conversationId) => {
             capturedConversationId = conversationId;
@@ -275,7 +260,6 @@ describe("msteams messenger", () => {
       const ids = await sendMSTeamsMessages({
         replyStyle: "thread",
         app: createMockApp(),
-        sdk: createMockSdk(),
         appId: "app123",
         conversationRef: baseRef,
         context: ctx,
@@ -289,21 +273,19 @@ describe("msteams messenger", () => {
     it("sends top-level messages via proactive send context", async () => {
       const texts: string[] = [];
       let capturedConversationId: string | undefined;
-      const sdk = createMockSdk({
-        createFn: async (activity: unknown) => {
-          const text = (activity as Record<string, unknown>)?.text;
-          texts.push(typeof text === "string" ? text : "");
-          return { id: typeof text === "string" ? `id:${text}` : "created" };
-        },
-        onClientCreated: (_serviceUrl, conversationId) => {
-          capturedConversationId = conversationId;
-        },
-      });
 
       const ids = await sendMSTeamsMessages({
         replyStyle: "top-level",
-        app: createMockApp(),
-        sdk,
+        app: createMockApp({
+          createFn: async (activity: unknown) => {
+            const text = (activity as Record<string, unknown>)?.text;
+            texts.push(typeof text === "string" ? text : "");
+            return { id: typeof text === "string" ? `id:${text}` : "created" };
+          },
+          onClientCreated: (_serviceUrl, conversationId) => {
+            capturedConversationId = conversationId;
+          },
+        }),
         appId: "app123",
         conversationRef: baseRef,
         messages: [{ text: "hello" }],
@@ -333,7 +315,6 @@ describe("msteams messenger", () => {
         const ids = await sendMSTeamsMessages({
           replyStyle: "thread",
           app: createMockApp(),
-          sdk: createMockSdk(),
           appId: "app123",
           conversationRef: {
             ...baseRef,
@@ -389,7 +370,6 @@ describe("msteams messenger", () => {
       const ids = await sendMSTeamsMessages({
         replyStyle: "thread",
         app: createMockApp(),
-        sdk: createMockSdk(),
         appId: "app123",
         conversationRef: baseRef,
         context: ctx,
@@ -433,7 +413,6 @@ describe("msteams messenger", () => {
         const ids = await sendMSTeamsMessages({
           replyStyle: "thread",
           app: createMockApp(),
-          sdk: createMockSdk(),
           appId: "app123",
           conversationRef: {
             ...baseRef,
@@ -474,7 +453,6 @@ describe("msteams messenger", () => {
         sendMSTeamsMessages({
           replyStyle: "thread",
           app: createMockApp(),
-          sdk: createMockSdk(),
           appId: "app123",
           conversationRef: baseRef,
           context: ctx,
@@ -490,8 +468,7 @@ describe("msteams messenger", () => {
 
       const ids = await sendMSTeamsMessages({
         replyStyle: "thread",
-        app: createMockApp(),
-        sdk: createMockSdk({ createFn: createRecordedSendActivity(proactiveSent) }),
+        app: createMockApp({ createFn: createRecordedSendActivity(proactiveSent) }),
         appId: "app123",
         conversationRef: baseRef,
         context: ctx,
@@ -510,8 +487,7 @@ describe("msteams messenger", () => {
 
       const ids = await sendMSTeamsMessages({
         replyStyle: "thread",
-        app: createMockApp(),
-        sdk: createMockSdk({ createFn: createRecordedSendActivity(proactiveSent) }),
+        app: createMockApp({ createFn: createRecordedSendActivity(proactiveSent) }),
         appId: "app123",
         conversationRef: baseRef,
         context: ctx,
@@ -602,8 +578,7 @@ describe("msteams messenger", () => {
 
       await sendMSTeamsMessages({
         replyStyle: "top-level",
-        app: createMockApp(),
-        sdk: createMockSdk({
+        app: createMockApp({
           createFn: createRecordedSendActivity(sent),
           onClientCreated: (_serviceUrl, conversationId) => {
             capturedConversationId = conversationId;
@@ -624,8 +599,7 @@ describe("msteams messenger", () => {
 
       const ids = await sendMSTeamsMessages({
         replyStyle: "top-level",
-        app: createMockApp(),
-        sdk: createMockSdk({
+        app: createMockApp({
           createFn: createRecordedSendActivity(attempts, 503),
         }),
         appId: "app123",
@@ -648,8 +622,7 @@ describe("msteams messenger", () => {
       // Three blocks (text + code + text) sent together in one call.
       const ids = await sendMSTeamsMessages({
         replyStyle: "top-level",
-        app: createMockApp(),
-        sdk: createMockSdk({
+        app: createMockApp({
           createFn: async (activity: unknown) => {
             const { text } = activity as { text?: string };
             allTexts.push(text ?? "");
@@ -820,8 +793,7 @@ describe("msteams messenger", () => {
 
       const ids = await sendMSTeamsMessages({
         replyStyle: "top-level",
-        app: createMockApp(),
-        sdk: createMockSdk({
+        app: createMockApp({
           createFn: createRecordedSendActivity(sent),
         }),
         appId: "app123",

@@ -2,7 +2,7 @@ import { type OpenClawConfig, type RuntimeEnv } from "../runtime-api.js";
 import type { MSTeamsConversationStore } from "./conversation-store.js";
 import type { MSTeamsMonitorLogger } from "./monitor-types.js";
 import type { MSTeamsPollStore } from "./polls.js";
-import type { MSTeamsApp, MSTeamsTeamsSdk } from "./sdk.js";
+import type { MSTeamsApp } from "./sdk.js";
 import type { MSTeamsSsoDeps } from "./sso.js";
 
 export type MSTeamsMessageHandlerDeps = {
@@ -10,7 +10,6 @@ export type MSTeamsMessageHandlerDeps = {
   runtime: RuntimeEnv;
   appId: string;
   app: MSTeamsApp;
-  sdk: MSTeamsTeamsSdk;
   tokenProvider: {
     getAccessToken: (scope: string) => Promise<string>;
   };

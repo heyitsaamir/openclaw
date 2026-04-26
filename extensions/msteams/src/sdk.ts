@@ -3,22 +3,19 @@ import * as fs from "node:fs";
 // but tsgo cannot resolve the chain. Use the dist subpath directly (type-only import).
 import type { IHttpServerAdapter } from "@microsoft/teams.apps/dist/http/index.js";
 import type { MSTeamsCredentials, MSTeamsFederatedCredentials } from "./token.js";
-import { buildUserAgent } from "./user-agent.js";
 
 /**
  * Resolved Teams SDK modules loaded lazily to avoid importing when the
  * provider is disabled.
  */
-export type MSTeamsTeamsSdk = {
+type TeamsSdkModules = {
   App: typeof import("@microsoft/teams.apps").App;
-  Client: typeof import("@microsoft/teams.api").Client;
-  ExpressAdapter: typeof import("@microsoft/teams.apps").ExpressAdapter;
 };
 
 /**
  * A Teams SDK App instance used for token management and proactive messaging.
  */
-export type MSTeamsApp = InstanceType<MSTeamsTeamsSdk["App"]>;
+export type MSTeamsApp = InstanceType<TeamsSdkModules["App"]>;
 
 /**
  * Token provider compatible with the existing codebase, wrapping the Teams
@@ -42,7 +39,6 @@ type AzureIdentityModule = {
     clientId: string,
     options: { certificate: string },
   ) => AzureTokenCredential;
-  ManagedIdentityCredential: new (clientId?: string) => AzureTokenCredential;
 };
 
 const AZURE_IDENTITY_MODULE = "@azure/identity";
@@ -54,18 +50,11 @@ async function loadAzureIdentity(): Promise<AzureIdentityModule> {
   return azureIdentityModulePromise;
 }
 
-let msTeamsSdkPromise: Promise<MSTeamsTeamsSdk> | null = null;
+let sdkAppPromise: Promise<TeamsSdkModules> | null = null;
 
-export async function loadMSTeamsSdk(): Promise<MSTeamsTeamsSdk> {
-  msTeamsSdkPromise ??= Promise.all([
-    import("@microsoft/teams.apps"),
-    import("@microsoft/teams.api"),
-  ]).then(([appsModule, apiModule]) => ({
-    App: appsModule.App,
-    Client: apiModule.Client,
-    ExpressAdapter: appsModule.ExpressAdapter,
-  }));
-  return msTeamsSdkPromise;
+async function loadSdkModules(): Promise<TeamsSdkModules> {
+  sdkAppPromise ??= import("@microsoft/teams.apps").then((m) => ({ App: m.App }));
+  return sdkAppPromise;
 }
 
 /**
@@ -98,38 +87,52 @@ export type CreateMSTeamsAppOptions = {
 /**
  * Create a Teams SDK App instance from credentials. The App manages token
  * acquisition, JWT validation, and the HTTP server lifecycle.
+ *
+ * Auth modes:
+ * - Secret: clientId + clientSecret → MSAL client credential flow (SDK built-in)
+ * - Managed identity: clientId + managedIdentityClientId → SDK built-in MI support
+ * - Certificate: clientId + custom token provider via @azure/identity
  */
 export async function createMSTeamsApp(
   creds: MSTeamsCredentials,
-  sdk: MSTeamsTeamsSdk,
   options?: CreateMSTeamsAppOptions,
 ): Promise<MSTeamsApp> {
+  const { App } = await loadSdkModules();
   const adapter = options?.httpServerAdapter ?? createNoOpHttpServerAdapter();
   const messagingEndpoint = options?.messagingEndpoint;
 
   if (creds.type === "federated") {
-    return createFederatedApp(creds, sdk, adapter, messagingEndpoint);
+    return createFederatedApp(creds, App, adapter, messagingEndpoint);
   }
-  return new sdk.App({
+  return new App({
     clientId: creds.appId,
     clientSecret: creds.appPassword,
     tenantId: creds.tenantId,
     httpServerAdapter: adapter,
     ...(messagingEndpoint ? { messagingEndpoint } : {}),
-  } as ConstructorParameters<MSTeamsTeamsSdk["App"]>[0]);
+  } as ConstructorParameters<typeof App>[0]);
 }
 
 function createFederatedApp(
   creds: MSTeamsFederatedCredentials,
-  sdk: MSTeamsTeamsSdk,
+  App: TeamsSdkModules["App"],
   adapter: IHttpServerAdapter,
   messagingEndpoint?: `/${string}`,
 ): MSTeamsApp {
   if (creds.useManagedIdentity) {
-    return createManagedIdentityApp(creds, sdk, adapter, messagingEndpoint);
+    // The SDK handles managed identity natively — pass managedIdentityClientId
+    // and it selects the right credential flow (system MI, user MI, or FIC).
+    return new App({
+      clientId: creds.appId,
+      tenantId: creds.tenantId,
+      managedIdentityClientId: creds.managedIdentityClientId ?? "system",
+      httpServerAdapter: adapter,
+      ...(messagingEndpoint ? { messagingEndpoint } : {}),
+    } as unknown as ConstructorParameters<typeof App>[0]);
   }
 
-  // Certificate-based auth
+  // Certificate-based auth — the SDK doesn't have built-in cert support,
+  // so we use AppOptions.token with @azure/identity's ClientCertificateCredential.
   if (!creds.certificatePath) {
     throw new Error("Federated credentials require either a certificate path or managed identity.");
   }
@@ -144,17 +147,16 @@ function createFederatedApp(
     });
   }
 
-  return createCertificateApp(creds, privateKey, sdk, adapter, messagingEndpoint);
+  return createCertificateApp(creds, privateKey, App, adapter, messagingEndpoint);
 }
 
 function createCertificateApp(
   creds: MSTeamsFederatedCredentials,
   privateKey: string,
-  sdk: MSTeamsTeamsSdk,
+  App: TeamsSdkModules["App"],
   adapter: IHttpServerAdapter,
   messagingEndpoint?: `/${string}`,
 ): MSTeamsApp {
-  // Lazily create and cache the credential so the token cache is reused.
   let credentialPromise: Promise<AzureTokenCredential> | null = null;
 
   const getCredential = async () => {
@@ -180,60 +182,18 @@ function createCertificateApp(
     return token.token;
   };
 
-  return new sdk.App({
+  return new App({
     clientId: creds.appId,
     tenantId: creds.tenantId,
     token: tokenProvider,
     httpServerAdapter: adapter,
     ...(messagingEndpoint ? { messagingEndpoint } : {}),
-  } as unknown as ConstructorParameters<MSTeamsTeamsSdk["App"]>[0]);
-}
-
-function createManagedIdentityApp(
-  creds: MSTeamsFederatedCredentials,
-  sdk: MSTeamsTeamsSdk,
-  adapter: IHttpServerAdapter,
-  messagingEndpoint?: `/${string}`,
-): MSTeamsApp {
-  // Lazily create and cache the credential instance so the token cache is
-  // reused across calls instead of hitting IMDS/AAD on every message.
-  let credentialPromise: Promise<AzureTokenCredential> | null = null;
-
-  const getCredential = async () => {
-    if (!credentialPromise) {
-      credentialPromise = loadAzureIdentity().then((az) =>
-        creds.managedIdentityClientId
-          ? new az.ManagedIdentityCredential(creds.managedIdentityClientId)
-          : new az.ManagedIdentityCredential(),
-      );
-    }
-    return credentialPromise;
-  };
-
-  const tokenProvider = async (scope: string | string[]): Promise<string> => {
-    const credential = await getCredential();
-    const token = await credential.getToken(scope);
-
-    if (!token?.token) {
-      throw new Error("Failed to acquire token via managed identity.");
-    }
-
-    return token.token;
-  };
-
-  return new sdk.App({
-    clientId: creds.appId,
-    tenantId: creds.tenantId,
-    token: tokenProvider,
-    httpServerAdapter: adapter,
-    ...(messagingEndpoint ? { messagingEndpoint } : {}),
-  } as unknown as ConstructorParameters<MSTeamsTeamsSdk["App"]>[0]);
+  } as unknown as ConstructorParameters<typeof App>[0]);
 }
 
 /**
  * Build a token provider that uses the Teams SDK App's public tokenManager
- * for token acquisition. Replaces the previous implementation that cast the
- * App to `unknown` to access protected getBotToken/getAppGraphToken methods.
+ * for token acquisition.
  */
 export function createMSTeamsTokenProvider(app: MSTeamsApp): MSTeamsTokenProvider {
   return {
@@ -252,9 +212,8 @@ export async function loadMSTeamsSdkWithAuth(
   creds: MSTeamsCredentials,
   options?: CreateMSTeamsAppOptions,
 ) {
-  const sdk = await loadMSTeamsSdk();
-  const app = await createMSTeamsApp(creds, sdk, options);
-  return { sdk, app };
+  const app = await createMSTeamsApp(creds, options);
+  return { app };
 }
 
 /**
@@ -268,15 +227,13 @@ export type MSTeamsSendContext = {
 };
 
 /**
- * Create a send context for a specific conversation using the SDK's API Client.
- * Uses the per-conversation serviceUrl (from the stored conversation reference)
- * rather than the App's default serviceUrl, so proactive sends route to the
- * correct regional Bot Framework endpoint.
+ * Create a send context for a specific conversation using the App's API client.
+ * Uses the App's default serviceUrl — Bot Framework routes proactive sends
+ * based on conversationId, so per-conversation serviceUrl is not needed for
+ * standard deployments.
  */
 export function createProactiveSendContext(params: {
-  sdk: MSTeamsTeamsSdk;
   app: MSTeamsApp;
-  serviceUrl: string;
   conversationId: string;
   conversationType?: string;
   bot?: { id?: string; name?: string };
@@ -285,14 +242,6 @@ export function createProactiveSendContext(params: {
   recipientId?: string;
   recipientAadObjectId?: string;
 }): MSTeamsSendContext {
-  const apiClient = new params.sdk.Client(params.serviceUrl, {
-    token: async () => {
-      const token = await params.app.tokenManager.getBotToken();
-      return token ? String(token) : undefined;
-    },
-    headers: { "User-Agent": buildUserAgent() },
-  } as Record<string, unknown>);
-
   function normalizeActivity(textOrActivity: string | object): Record<string, unknown> {
     return typeof textOrActivity === "string"
       ? ({ type: "message", text: textOrActivity } as Record<string, unknown>)
@@ -303,8 +252,6 @@ export function createProactiveSendContext(params: {
     async sendActivity(textOrActivity: string | object): Promise<unknown> {
       const msg = normalizeActivity(textOrActivity);
 
-      // Merge caller-provided channelData with the tenant metadata so Bot
-      // Framework receives `channelData.tenant.id` for proactive routing.
       const existingChannelData =
         msg.channelData && typeof msg.channelData === "object"
           ? (msg.channelData as Record<string, unknown>)
@@ -313,7 +260,7 @@ export function createProactiveSendContext(params: {
         ? { ...existingChannelData, tenant: { id: params.tenantId } }
         : existingChannelData;
 
-      return await apiClient.conversations.activities(params.conversationId).create({
+      return await params.app.api.conversations.activities(params.conversationId).create({
         type: "message",
         ...msg,
         ...(channelData ? { channelData } : {}),
@@ -347,7 +294,7 @@ export function createProactiveSendContext(params: {
       if (!activityId) {
         throw new Error("updateActivity requires an activity id");
       }
-      return await apiClient.conversations
+      return await params.app.api.conversations
         .activities(params.conversationId)
         .update(activityId, {
           type: "message",
@@ -359,7 +306,7 @@ export function createProactiveSendContext(params: {
       if (!activityId) {
         throw new Error("deleteActivity requires an activity id");
       }
-      await apiClient.conversations.activities(params.conversationId).delete(activityId);
+      await params.app.api.conversations.activities(params.conversationId).delete(activityId);
     },
   };
 }

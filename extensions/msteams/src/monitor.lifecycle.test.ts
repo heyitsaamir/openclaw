@@ -97,11 +97,6 @@ const registerMSTeamsHandlers = vi.hoisted(() =>
 );
 const loadMSTeamsSdkWithAuth = vi.hoisted(() =>
   vi.fn(async () => ({
-    sdk: {
-      App: class {},
-      Client: class {},
-      ExpressAdapter: class {},
-    },
     app: {
       on: vi.fn(),
       initialize: vi.fn(async () => {}),

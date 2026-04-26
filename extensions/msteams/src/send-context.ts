@@ -13,7 +13,7 @@ import type {
 import { formatUnknownError } from "./errors.js";
 import { resolveGraphChatId } from "./graph-upload.js";
 import { getMSTeamsRuntime } from "./runtime.js";
-import type { MSTeamsApp, MSTeamsTeamsSdk } from "./sdk.js";
+import type { MSTeamsApp } from "./sdk.js";
 import { createMSTeamsTokenProvider, loadMSTeamsSdkWithAuth } from "./sdk.js";
 import { resolveMSTeamsCredentials } from "./token.js";
 
@@ -24,7 +24,6 @@ export type MSTeamsProactiveContext = {
   conversationId: string;
   ref: StoredConversationReference;
   app: MSTeamsApp;
-  sdk: MSTeamsTeamsSdk;
   log: ReturnType<PluginRuntime["logging"]["getChildLogger"]>;
   /** The type of conversation: personal (1:1), groupChat, or channel */
   conversationType: MSTeamsConversationType;
@@ -149,7 +148,7 @@ export async function resolveMSTeamsSendContext(params: {
   const core = getMSTeamsRuntime();
   const log = core.logging.getChildLogger({ name: "msteams:send" });
 
-  const { sdk, app } = await loadMSTeamsSdkWithAuth(creds);
+  const { app } = await loadMSTeamsSdkWithAuth(creds);
 
   // Create token provider adapter for Graph API / OneDrive operations
   const tokenProvider: MSTeamsAccessTokenProvider = createMSTeamsTokenProvider(app);
@@ -221,7 +220,6 @@ export async function resolveMSTeamsSendContext(params: {
     conversationId,
     ref,
     app,
-    sdk,
     log,
     conversationType,
     tokenProvider,

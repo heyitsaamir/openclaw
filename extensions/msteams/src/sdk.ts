@@ -1,7 +1,4 @@
 import * as fs from "node:fs";
-// IHttpServerAdapter is re-exported via the public barrel (`export * from './http'`)
-// but tsgo cannot resolve the chain. Use the dist subpath directly (type-only import).
-import type { IHttpServerAdapter } from "@microsoft/teams.apps/dist/http/index.js";
 import type { MSTeamsCredentials, MSTeamsFederatedCredentials } from "./token.js";
 
 /**
@@ -58,25 +55,16 @@ async function loadSdkModules(): Promise<TeamsSdkModules> {
 }
 
 /**
- * Create a no-op HTTP server adapter for non-server scenarios (probes,
- * proactive-only CLI sends) where no Express server exists.
- */
-function createNoOpHttpServerAdapter(): IHttpServerAdapter {
-  return {
-    registerRoute() {},
-  };
-}
-
-/**
  * Options for creating a Teams SDK App instance.
  */
 export type CreateMSTeamsAppOptions = {
   /**
    * HTTP server adapter to use. When an Express app is available (monitor
    * mode), pass an ExpressAdapter so the SDK registers routes and handles
-   * JWT validation. When omitted, a no-op adapter is used (probe/CLI mode).
+   * JWT validation. When omitted, the SDK creates a default ExpressAdapter
+   * (no server starts until app.start() is called).
    */
-  httpServerAdapter?: IHttpServerAdapter;
+  httpServerAdapter?: InstanceType<typeof import("@microsoft/teams.apps").ExpressAdapter>;
   /**
    * Custom messaging endpoint path.
    * @default '/api/messages'
@@ -98,26 +86,26 @@ export async function createMSTeamsApp(
   options?: CreateMSTeamsAppOptions,
 ): Promise<MSTeamsApp> {
   const { App } = await loadSdkModules();
-  const adapter = options?.httpServerAdapter ?? createNoOpHttpServerAdapter();
-  const messagingEndpoint = options?.messagingEndpoint;
+  const appOptions: Record<string, unknown> = {
+    ...(options?.httpServerAdapter ? { httpServerAdapter: options.httpServerAdapter } : {}),
+    ...(options?.messagingEndpoint ? { messagingEndpoint: options.messagingEndpoint } : {}),
+  };
 
   if (creds.type === "federated") {
-    return createFederatedApp(creds, App, adapter, messagingEndpoint);
+    return createFederatedApp(creds, App, appOptions);
   }
   return new App({
     clientId: creds.appId,
     clientSecret: creds.appPassword,
     tenantId: creds.tenantId,
-    httpServerAdapter: adapter,
-    ...(messagingEndpoint ? { messagingEndpoint } : {}),
+    ...appOptions,
   } as ConstructorParameters<typeof App>[0]);
 }
 
 function createFederatedApp(
   creds: MSTeamsFederatedCredentials,
   App: TeamsSdkModules["App"],
-  adapter: IHttpServerAdapter,
-  messagingEndpoint?: `/${string}`,
+  appOptions: Record<string, unknown>,
 ): MSTeamsApp {
   if (creds.useManagedIdentity) {
     // The SDK handles managed identity natively — pass managedIdentityClientId
@@ -126,8 +114,7 @@ function createFederatedApp(
       clientId: creds.appId,
       tenantId: creds.tenantId,
       managedIdentityClientId: creds.managedIdentityClientId ?? "system",
-      httpServerAdapter: adapter,
-      ...(messagingEndpoint ? { messagingEndpoint } : {}),
+      ...appOptions,
     } as unknown as ConstructorParameters<typeof App>[0]);
   }
 
@@ -147,15 +134,14 @@ function createFederatedApp(
     });
   }
 
-  return createCertificateApp(creds, privateKey, App, adapter, messagingEndpoint);
+  return createCertificateApp(creds, privateKey, App, appOptions);
 }
 
 function createCertificateApp(
   creds: MSTeamsFederatedCredentials,
   privateKey: string,
   App: TeamsSdkModules["App"],
-  adapter: IHttpServerAdapter,
-  messagingEndpoint?: `/${string}`,
+  appOptions: Record<string, unknown>,
 ): MSTeamsApp {
   let credentialPromise: Promise<AzureTokenCredential> | null = null;
 
@@ -186,8 +172,7 @@ function createCertificateApp(
     clientId: creds.appId,
     tenantId: creds.tenantId,
     token: tokenProvider,
-    httpServerAdapter: adapter,
-    ...(messagingEndpoint ? { messagingEndpoint } : {}),
+    ...appOptions,
   } as unknown as ConstructorParameters<typeof App>[0]);
 }
 

@@ -536,8 +536,8 @@ export type DeleteMSTeamsMessageResult = {
 /**
  * Edit (update) a previously sent message in a Teams conversation.
  *
- * Uses the Bot Framework `continueConversation` → `updateActivity` flow
- * for proactive edits outside of the original turn context.
+ * Uses the Bot Framework REST API for proactive edits outside of the
+ * original turn context.
  */
 export async function editMessageMSTeams(
   params: EditMSTeamsMessageParams,
@@ -578,8 +578,8 @@ export async function editMessageMSTeams(
 /**
  * Delete a previously sent message in a Teams conversation.
  *
- * Uses the Bot Framework `continueConversation` → `deleteActivity` flow
- * for proactive deletes outside of the original turn context.
+ * Uses the Bot Framework REST API for proactive deletes outside of the
+ * original turn context.
  */
 export async function deleteMessageMSTeams(
   params: DeleteMSTeamsMessageParams,

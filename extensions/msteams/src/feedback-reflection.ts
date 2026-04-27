@@ -28,7 +28,6 @@ import {
 } from "./feedback-reflection-store.js";
 import { buildConversationReference } from "./messenger.js";
 import type { MSTeamsApp } from "./sdk.js";
-import { createProactiveSendContext } from "./sdk.js";
 import type { MSTeamsMonitorLogger } from "./monitor-types.js";
 import { getMSTeamsRuntime } from "./runtime.js";
 
@@ -157,17 +156,7 @@ async function sendReflectionFollowUp(params: {
   userMessage: string;
 }): Promise<void> {
   const baseRef = buildConversationReference(params.conversationRef);
-  const ctx = createProactiveSendContext({
-    app: params.app,
-    serviceUrl: baseRef.serviceUrl ?? "",
-    conversationId: baseRef.conversation.id,
-    conversationType: baseRef.conversation.conversationType,
-    bot: baseRef.agent ?? undefined,
-    tenantId: baseRef.tenantId,
-    recipientId: baseRef.user?.id,
-    recipientAadObjectId: baseRef.aadObjectId ?? baseRef.user?.aadObjectId,
-  });
-  await ctx.sendActivity({ type: "message", text: params.userMessage });
+  await params.app.send(baseRef.conversation.id, { type: "message", text: params.userMessage });
 }
 
 /**

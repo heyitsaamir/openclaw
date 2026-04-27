@@ -25,7 +25,7 @@ import {
   sendMSTeamsMessages,
 } from "./messenger.js";
 import { setMSTeamsRuntime } from "./runtime.js";
-import type { MSTeamsApp, MSTeamsSendContext } from "./sdk.js";
+import type { MSTeamsApp } from "./sdk.js";
 
 const chunkMarkdownText = (text: string, limit: number) => {
   if (!text) {
@@ -104,6 +104,10 @@ function createMockApp(opts?: MockAppOptions): MSTeamsApp {
       getBotToken: async () => ({ toString: () => "bot-token" }),
       getGraphToken: async () => ({ toString: () => "graph-token" }),
     },
+    send: async (conversationId: string, activity: unknown) => {
+      opts?.onClientCreated?.("", conversationId);
+      return await createFn(activity);
+    },
     api: {
       conversations: {
         activities: (conversationId: string) => {
@@ -118,9 +122,6 @@ function createMockApp(opts?: MockAppOptions): MSTeamsApp {
     },
   } as unknown as MSTeamsApp;
 }
-
-const noopUpdateActivity = async () => ({ id: "updated" });
-const noopDeleteActivity = async () => {};
 
 describe("msteams messenger", () => {
   beforeEach(() => {
@@ -193,8 +194,6 @@ describe("msteams messenger", () => {
           }
           throw new TypeError(REVOCATION_ERROR);
         },
-        updateActivity: noopUpdateActivity,
-        deleteActivity: noopDeleteActivity,
       };
     }
 
@@ -254,8 +253,6 @@ describe("msteams messenger", () => {
       const sent: string[] = [];
       const ctx = {
         sendActivity: createRecordedSendActivity(sent),
-        updateActivity: noopUpdateActivity,
-        deleteActivity: noopDeleteActivity,
       };
       const ids = await sendMSTeamsMessages({
         replyStyle: "thread",
@@ -308,8 +305,6 @@ describe("msteams messenger", () => {
             sent.push(activity as { text?: string; entities?: unknown[] });
             return { id: "id:one" };
           },
-          updateActivity: noopUpdateActivity,
-          deleteActivity: noopDeleteActivity,
         };
 
         const ids = await sendMSTeamsMessages({
@@ -364,8 +359,6 @@ describe("msteams messenger", () => {
 
       const ctx = {
         sendActivity: createRecordedSendActivity(attempts, 429),
-        updateActivity: noopUpdateActivity,
-        deleteActivity: noopDeleteActivity,
       };
       const ids = await sendMSTeamsMessages({
         replyStyle: "thread",
@@ -407,8 +400,6 @@ describe("msteams messenger", () => {
 
         const ctx = {
           sendActivity: createRecordedSendActivity(attempts),
-          updateActivity: noopUpdateActivity,
-          deleteActivity: noopDeleteActivity,
         };
         const ids = await sendMSTeamsMessages({
           replyStyle: "thread",
@@ -445,8 +436,6 @@ describe("msteams messenger", () => {
         sendActivity: async () => {
           throw Object.assign(new Error("bad request"), { statusCode: 400 });
         },
-        updateActivity: noopUpdateActivity,
-        deleteActivity: noopDeleteActivity,
       };
 
       await expect(
@@ -784,11 +773,9 @@ describe("msteams messenger", () => {
     });
 
     it("propagates tenantId/aadObjectId through sendMSTeamsMessages proactive path", async () => {
-      // In the new SDK pattern, createProactiveSendContext receives tenantId
-      // and recipientAadObjectId as params and embeds them in the outbound
-      // activity payload. We verify the conversation reference that feeds
-      // into the proactive path carries tenant/aad data by checking
-      // buildConversationReference (tested above) plus that the send succeeds.
+      // The proactive path (app.send) uses the conversation reference built
+      // by buildConversationReference. We verify the reference carries
+      // tenant/aad data (tested above) and that the send succeeds.
       const sent: string[] = [];
 
       const ids = await sendMSTeamsMessages({

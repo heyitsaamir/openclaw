@@ -19,7 +19,6 @@ import { buildConversationReference, sendMSTeamsMessages } from "./messenger.js"
 import { setPendingUploadActivityIdFs } from "./pending-uploads-fs.js";
 import { setPendingUploadActivityId } from "./pending-uploads.js";
 import { buildMSTeamsPollCard } from "./polls.js";
-import { createProactiveSendContext } from "./sdk.js";
 import { resolveMSTeamsSendContext, type MSTeamsProactiveContext } from "./send-context.js";
 
 export type SendMSTeamsMessageParams = {
@@ -388,17 +387,7 @@ async function sendProactiveActivityRaw({
   activity,
 }: ProactiveActivityRawParams): Promise<string> {
   const baseRef = buildConversationReference(ref);
-  const ctx = createProactiveSendContext({
-    app,
-    serviceUrl: baseRef.serviceUrl ?? "",
-    conversationId: baseRef.conversation.id,
-    conversationType: baseRef.conversation.conversationType,
-    bot: baseRef.agent ?? undefined,
-    tenantId: baseRef.tenantId,
-    recipientId: baseRef.user?.id,
-    recipientAadObjectId: baseRef.aadObjectId ?? baseRef.user?.aadObjectId,
-  });
-  const response = await ctx.sendActivity(activity);
+  const response = await app.send(baseRef.conversation.id, activity);
   return extractMessageId(response) ?? "unknown";
 }
 
@@ -562,22 +551,15 @@ export async function editMessageMSTeams(
   log.debug?.("editing proactive message", { conversationId, activityId, textLength: text.length });
 
   const baseRef = buildConversationReference(ref);
-  const proactiveRef = { ...baseRef, activityId: undefined };
 
   try {
-    const ctx = createProactiveSendContext({
-      app,
-      serviceUrl: baseRef.serviceUrl ?? "",
-      conversationId: baseRef.conversation.id,
-      conversationType: baseRef.conversation.conversationType,
-      bot: baseRef.agent ?? undefined,
-      tenantId: baseRef.tenantId,
-    });
-    await ctx.updateActivity({
-      type: "message",
-      id: activityId,
-      text,
-    });
+    await app.api.conversations
+      .activities(baseRef.conversation.id)
+      .update(activityId, {
+        type: "message",
+        id: activityId,
+        text,
+      } as Record<string, unknown>);
   } catch (err) {
     const classification = classifyMSTeamsSendError(err);
     const hint = formatMSTeamsSendErrorHint(classification);
@@ -611,18 +593,11 @@ export async function deleteMessageMSTeams(
   log.debug?.("deleting proactive message", { conversationId, activityId });
 
   const baseRef = buildConversationReference(ref);
-  const proactiveRef = { ...baseRef, activityId: undefined };
 
   try {
-    const ctx = createProactiveSendContext({
-      app,
-      serviceUrl: baseRef.serviceUrl ?? "",
-      conversationId: baseRef.conversation.id,
-      conversationType: baseRef.conversation.conversationType,
-      bot: baseRef.agent ?? undefined,
-      tenantId: baseRef.tenantId,
-    });
-    await ctx.deleteActivity(activityId);
+    await app.api.conversations
+      .activities(baseRef.conversation.id)
+      .delete(activityId);
   } catch (err) {
     const classification = classifyMSTeamsSendError(err);
     const hint = formatMSTeamsSendErrorHint(classification);

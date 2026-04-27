@@ -21,7 +21,6 @@ import {
   sendMSTeamsMessages,
 } from "./messenger.js";
 import type { MSTeamsApp } from "./sdk.js";
-import { createProactiveSendContext } from "./sdk.js";
 import type { MSTeamsMonitorLogger } from "./monitor-types.js";
 import { createTeamsReplyStreamController } from "./reply-stream-controller.js";
 import { withRevokedProxyFallback } from "./revoked-context.js";
@@ -85,15 +84,7 @@ export function createMSTeamsReplyDispatcher(params: {
       },
       onRevoked: async () => {
         const baseRef = buildConversationReference(params.conversationRef);
-        const ctx = createProactiveSendContext({
-          app: params.app,
-          serviceUrl: baseRef.serviceUrl ?? "",
-          conversationId: baseRef.conversation.id,
-          conversationType: baseRef.conversation.conversationType,
-          bot: baseRef.agent ?? undefined,
-          tenantId: baseRef.tenantId,
-        });
-        await ctx.sendActivity({ type: "typing" });
+        await params.app.send(baseRef.conversation.id, { type: "typing" });
       },
       onRevokedLog: () => {
         params.log.debug?.("turn context revoked, sending typing via proactive messaging");

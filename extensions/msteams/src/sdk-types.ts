@@ -50,10 +50,10 @@ export type MSTeamsActivity = {
 
 export type MSTeamsTurnContext = {
   activity: MSTeamsActivity;
-  sendActivity: (textOrActivity: string | object) => Promise<unknown>;
+  sendActivity: (activity: import("@microsoft/teams.api").ActivityLike) => Promise<unknown>;
   sendActivities: (
-    activities: Array<{ type: string } & Record<string, unknown>>,
+    activities: Array<import("@microsoft/teams.api").ActivityParams>,
   ) => Promise<unknown>;
-  updateActivity: (activity: object) => Promise<{ id?: string } | void>;
+  updateActivity: (activity: import("@microsoft/teams.api").ActivityParams) => Promise<{ id?: string } | void>;
   deleteActivity: (activityId: string) => Promise<void>;
 };

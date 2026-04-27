@@ -206,8 +206,8 @@ export async function loadMSTeamsSdkWithAuth(
  * send/update/delete activities on a specific conversation.
  */
 export type MSTeamsSendContext = {
-  sendActivity: (textOrActivity: string | object) => Promise<unknown>;
-  updateActivity: (activityUpdate: object) => Promise<{ id?: string } | void>;
+  sendActivity: (activity: import("@microsoft/teams.api").ActivityLike) => Promise<unknown>;
+  updateActivity: (activity: import("@microsoft/teams.api").ActivityParams) => Promise<{ id?: string } | void>;
   deleteActivity: (activityId: string) => Promise<void>;
 };
 
@@ -227,15 +227,15 @@ export function createProactiveSendContext(params: {
   recipientId?: string;
   recipientAadObjectId?: string;
 }): MSTeamsSendContext {
-  function normalizeActivity(textOrActivity: string | object): Record<string, unknown> {
-    return typeof textOrActivity === "string"
-      ? ({ type: "message", text: textOrActivity } as Record<string, unknown>)
-      : (textOrActivity as Record<string, unknown>);
+  function normalizeActivity(activity: import("@microsoft/teams.api").ActivityLike): Record<string, unknown> {
+    return typeof activity === "string"
+      ? ({ type: "message", text: activity } as Record<string, unknown>)
+      : (activity as Record<string, unknown>);
   }
 
   return {
-    async sendActivity(textOrActivity: string | object): Promise<unknown> {
-      const msg = normalizeActivity(textOrActivity);
+    async sendActivity(activity: import("@microsoft/teams.api").ActivityLike): Promise<unknown> {
+      const msg = normalizeActivity(activity);
 
       const existingChannelData =
         msg.channelData && typeof msg.channelData === "object"
@@ -273,8 +273,8 @@ export function createProactiveSendContext(params: {
       } as Record<string, unknown>);
     },
 
-    async updateActivity(activityUpdate: object): Promise<{ id?: string } | void> {
-      const nextActivity = activityUpdate as { id?: string } & Record<string, unknown>;
+    async updateActivity(activity: import("@microsoft/teams.api").ActivityParams): Promise<{ id?: string } | void> {
+      const nextActivity = activity as { id?: string } & Record<string, unknown>;
       const activityId = nextActivity.id;
       if (!activityId) {
         throw new Error("updateActivity requires an activity id");

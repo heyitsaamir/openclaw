@@ -106,16 +106,7 @@ export async function sendMessageMSTeams(
   });
   const messageText = convertMarkdownTables(text ?? "", tableMode);
   const ctx = await resolveMSTeamsSendContext({ cfg, to });
-  const {
-    app,
-    appId,
-    conversationId,
-    ref,
-    log,
-    conversationType,
-    tokenProvider,
-    sharePointSiteId,
-  } = ctx;
+  const { app, conversationId, ref, log, conversationType, tokenProvider, sharePointSiteId } = ctx;
 
   log.debug?.("sending proactive message", {
     conversationId,
@@ -326,16 +317,8 @@ async function sendTextWithMedia(
   text: string,
   mediaUrl: string | undefined,
 ): Promise<SendMSTeamsMessageResult> {
-  const {
-    app,
-    appId,
-    conversationId,
-    ref,
-    log,
-    tokenProvider,
-    sharePointSiteId,
-    mediaMaxBytes,
-  } = ctx;
+  const { app, appId, conversationId, ref, log, tokenProvider, sharePointSiteId, mediaMaxBytes } =
+    ctx;
 
   let messageIds: string[];
   try {
@@ -417,7 +400,7 @@ export async function sendPollMSTeams(
   params: SendMSTeamsPollParams,
 ): Promise<SendMSTeamsPollResult> {
   const { cfg, to, question, options, maxSelections } = params;
-  const { app, appId, conversationId, ref, log } = await resolveMSTeamsSendContext({
+  const { app, conversationId, ref, log } = await resolveMSTeamsSendContext({
     cfg,
     to,
   });
@@ -468,7 +451,7 @@ export async function sendAdaptiveCardMSTeams(
   params: SendMSTeamsCardParams,
 ): Promise<SendMSTeamsCardResult> {
   const { cfg, to, card } = params;
-  const { app, appId, conversationId, ref, log } = await resolveMSTeamsSendContext({
+  const { app, conversationId, ref, log } = await resolveMSTeamsSendContext({
     cfg,
     to,
   });
@@ -543,7 +526,7 @@ export async function editMessageMSTeams(
   params: EditMSTeamsMessageParams,
 ): Promise<EditMSTeamsMessageResult> {
   const { cfg, to, activityId, text } = params;
-  const { app, appId, conversationId, ref, log } = await resolveMSTeamsSendContext({
+  const { app, conversationId, ref, log } = await resolveMSTeamsSendContext({
     cfg,
     to,
   });
@@ -553,13 +536,11 @@ export async function editMessageMSTeams(
   const baseRef = buildConversationReference(ref);
 
   try {
-    await app.api.conversations
-      .activities(baseRef.conversation.id)
-      .update(activityId, {
-        type: "message",
-        id: activityId,
-        text,
-      } as Record<string, unknown>);
+    await app.api.conversations.activities(baseRef.conversation.id).update(activityId, {
+      type: "message",
+      id: activityId,
+      text,
+    } as Record<string, unknown>);
   } catch (err) {
     const classification = classifyMSTeamsSendError(err);
     const hint = formatMSTeamsSendErrorHint(classification);
@@ -585,7 +566,7 @@ export async function deleteMessageMSTeams(
   params: DeleteMSTeamsMessageParams,
 ): Promise<DeleteMSTeamsMessageResult> {
   const { cfg, to, activityId } = params;
-  const { app, appId, conversationId, ref, log } = await resolveMSTeamsSendContext({
+  const { app, conversationId, ref, log } = await resolveMSTeamsSendContext({
     cfg,
     to,
   });
@@ -595,9 +576,7 @@ export async function deleteMessageMSTeams(
   const baseRef = buildConversationReference(ref);
 
   try {
-    await app.api.conversations
-      .activities(baseRef.conversation.id)
-      .delete(activityId);
+    await app.api.conversations.activities(baseRef.conversation.id).delete(activityId);
   } catch (err) {
     const classification = classifyMSTeamsSendError(err);
     const hint = formatMSTeamsSendErrorHint(classification);

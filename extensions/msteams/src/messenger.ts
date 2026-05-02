@@ -38,6 +38,7 @@ const MSTEAMS_MAX_MEDIA_BYTES = 100 * 1024 * 1024;
  */
 const FILE_CONSENT_THRESHOLD_BYTES = 4 * 1024 * 1024;
 
+import type { MSTeamsActivityLike } from "./sdk-types.js";
 import type { MSTeamsApp } from "./sdk.js";
 
 export type MSTeamsConversationReference = {
@@ -407,7 +408,7 @@ export async function sendMSTeamsMessages(params: {
   app: MSTeamsApp;
   appId: string;
   conversationRef: StoredConversationReference;
-  context?: { sendActivity: (activity: import("@microsoft/teams.api").ActivityLike) => Promise<unknown> };
+  context?: { sendActivity: (activity: MSTeamsActivityLike) => Promise<unknown> };
   messages: MSTeamsRenderedMessage[];
   retry?: false | MSTeamsSendRetryOptions;
   onRetry?: (event: MSTeamsSendRetryEvent) => void;
@@ -466,7 +467,7 @@ export async function sendMSTeamsMessages(params: {
   };
 
   const sendMessageInContext = async (
-    sendFn: (activity: import("@microsoft/teams.api").ActivityLike) => Promise<unknown>,
+    sendFn: (activity: MSTeamsActivityLike) => Promise<unknown>,
     message: MSTeamsRenderedMessage,
     messageIndex: number,
   ): Promise<string> => {
@@ -507,7 +508,7 @@ export async function sendMSTeamsMessages(params: {
   };
 
   const sendMessageBatchInContext = async (
-    sendFn: (activity: import("@microsoft/teams.api").ActivityLike) => Promise<unknown>,
+    sendFn: (activity: MSTeamsActivityLike) => Promise<unknown>,
     batch: MSTeamsRenderedMessage[],
     startIndex: number,
   ): Promise<string[]> => {
@@ -533,8 +534,7 @@ export async function sendMSTeamsMessages(params: {
         ? `${baseRef.conversation.id};messageid=${threadActivityId}`
         : baseRef.conversation.id;
 
-    const sendFn = (activity: import("@microsoft/teams.api").ActivityLike) =>
-      params.app.send(conversationId, activity);
+    const sendFn = (activity: MSTeamsActivityLike) => params.app.send(conversationId, activity);
     return await sendMessageBatchInContext(sendFn, batch, startIndex);
   };
 

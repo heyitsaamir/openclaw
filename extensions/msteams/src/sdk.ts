@@ -10,9 +10,26 @@ type TeamsSdkModules = {
 };
 
 /**
- * A Teams SDK App instance used for token management and proactive messaging.
+ * Structural interface for the Teams SDK App — avoids tsgo resolution bugs
+ * with @microsoft/teams.api hashed declaration files.
  */
-export type MSTeamsApp = InstanceType<TeamsSdkModules["App"]>;
+export type MSTeamsApp = {
+  send(conversationId: string, activity: unknown): Promise<{ id?: string }>;
+  on(event: string, cb: (...args: unknown[]) => unknown): unknown;
+  initialize(): Promise<void>;
+  tokenManager: {
+    getGraphToken(): Promise<unknown>;
+    getBotToken(): Promise<unknown>;
+  };
+  api: {
+    conversations: {
+      activities(conversationId: string): {
+        update(activityId: string, activity: unknown): Promise<unknown>;
+        delete(activityId: string): Promise<unknown>;
+      };
+    };
+  };
+};
 
 /**
  * Token provider compatible with the existing codebase, wrapping the Teams
@@ -64,7 +81,12 @@ export type CreateMSTeamsAppOptions = {
    * JWT validation. When omitted, the SDK creates a default ExpressAdapter
    * (no server starts until app.start() is called).
    */
-  httpServerAdapter?: InstanceType<typeof import("@microsoft/teams.apps").ExpressAdapter>;
+  /** Structural type for an HTTP server adapter (e.g. ExpressAdapter). */
+  httpServerAdapter?: {
+    registerRoute(method: string, path: string, handler: unknown): void;
+    start?(port: number | string): Promise<void>;
+    stop?(): Promise<void>;
+  };
   /**
    * Custom messaging endpoint path.
    * @default '/api/messages'
@@ -99,7 +121,7 @@ export async function createMSTeamsApp(
     clientSecret: creds.appPassword,
     tenantId: creds.tenantId,
     ...appOptions,
-  } as ConstructorParameters<typeof App>[0]);
+  } as ConstructorParameters<typeof App>[0]) as unknown as MSTeamsApp;
 }
 
 function createFederatedApp(
@@ -115,7 +137,7 @@ function createFederatedApp(
       tenantId: creds.tenantId,
       managedIdentityClientId: creds.managedIdentityClientId ?? "system",
       ...appOptions,
-    } as unknown as ConstructorParameters<typeof App>[0]);
+    } as unknown as ConstructorParameters<typeof App>[0]) as unknown as MSTeamsApp;
   }
 
   // Certificate-based auth — the SDK doesn't have built-in cert support,
@@ -173,7 +195,7 @@ function createCertificateApp(
     tenantId: creds.tenantId,
     token: tokenProvider,
     ...appOptions,
-  } as unknown as ConstructorParameters<typeof App>[0]);
+  } as unknown as ConstructorParameters<typeof App>[0]) as unknown as MSTeamsApp;
 }
 
 /**
@@ -181,14 +203,18 @@ function createCertificateApp(
  * for token acquisition.
  */
 export function createMSTeamsTokenProvider(app: MSTeamsApp): MSTeamsTokenProvider {
+  const tokenToString = (token: unknown): string => {
+    if (token == null) {
+      return "";
+    }
+    return (token as { toString(): string }).toString();
+  };
   return {
     async getAccessToken(scope: string): Promise<string> {
       if (scope.includes("graph.microsoft.com")) {
-        const token = await app.tokenManager.getGraphToken();
-        return token ? String(token) : "";
+        return tokenToString(await app.tokenManager.getGraphToken());
       }
-      const token = await app.tokenManager.getBotToken();
-      return token ? String(token) : "";
+      return tokenToString(await app.tokenManager.getBotToken());
     },
   };
 }

@@ -76,8 +76,6 @@ const packageManifestContractTests: PackageManifestContractParams[] = [
       "@microsoft/teams.api",
       "@microsoft/teams.apps",
       "express",
-      "jsonwebtoken",
-      "jwks-rsa",
     ],
     mirroredRootRuntimeDeps: ["typebox"],
     minHostVersionBaseline: "2026.3.22",

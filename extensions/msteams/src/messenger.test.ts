@@ -74,13 +74,6 @@ const createRecordedSendActivity = (
 
 const REVOCATION_ERROR = "Cannot perform 'set' on a proxy that has been revoked";
 
-function requireConversationId(ref: { conversation?: { id?: string } }) {
-  if (!ref.conversation?.id) {
-    throw new Error("expected Teams top-level send to preserve conversation id");
-  }
-  return ref.conversation.id;
-}
-
 function requireSentMessage(sent: Array<{ text?: string; entities?: unknown[] }>) {
   const firstSent = sent[0];
   if (!firstSent?.text) {
@@ -95,10 +88,12 @@ type MockAppOptions = {
 };
 
 function createMockApp(opts?: MockAppOptions): MSTeamsApp {
-  const createFn = opts?.createFn ?? (async (activity: unknown) => {
-    const text = (activity as Record<string, unknown>)?.text;
-    return { id: typeof text === "string" ? `id:${text}` : "created" };
-  });
+  const createFn =
+    opts?.createFn ??
+    (async (activity: unknown) => {
+      const text = (activity as Record<string, unknown>)?.text;
+      return { id: typeof text === "string" ? `id:${text}` : "created" };
+    });
   return {
     tokenManager: {
       getBotToken: async () => ({ toString: () => "bot-token" }),
@@ -114,7 +109,9 @@ function createMockApp(opts?: MockAppOptions): MSTeamsApp {
           opts?.onClientCreated?.("", conversationId);
           return {
             create: createFn,
-            update: async (_id: string, activity: unknown) => ({ id: (activity as Record<string, unknown>)?.id ?? "updated" }),
+            update: async (_id: string, activity: unknown) => ({
+              id: (activity as Record<string, unknown>)?.id ?? "updated",
+            }),
             delete: async () => {},
           };
         },
@@ -241,9 +238,7 @@ describe("msteams messenger", () => {
         proactiveSent,
         // Reconstruct a reference-like shape from captured conversationId for assertion compat
         reference: {
-          conversation: capturedConversationId
-            ? { id: capturedConversationId }
-            : undefined,
+          conversation: capturedConversationId ? { id: capturedConversationId } : undefined,
           activityId: undefined,
         },
       };

@@ -101,15 +101,15 @@ const loadMSTeamsSdkWithAuth = vi.hoisted(() =>
       on: vi.fn(),
       initialize: vi.fn(async () => {}),
       tokenManager: {
-        getBotToken: vi.fn(async () => ({ toString: () => "bot-token" })),
-        getGraphToken: vi.fn(async () => ({ toString: () => "graph-token" })),
+        getBotToken: vi.fn(async () => ({ toString: (): string => "bot-token" })),
+        getGraphToken: vi.fn(async () => ({ toString: (): string => "graph-token" })),
       },
     },
   })),
 );
 
 vi.mock("@microsoft/teams.apps", () => ({
-  ExpressAdapter: class {},
+  ExpressAdapter: vi.fn(),
 }));
 
 vi.mock("./monitor-handler.js", () => ({
@@ -250,11 +250,7 @@ describe("monitorMSTeamsProvider lifecycle", () => {
     // Request without Bearer token should be rejected
     const statusFn = vi.fn().mockReturnValue({ json: vi.fn() });
     const next = vi.fn();
-    bearerMiddleware(
-      { headers: {} } as Request,
-      { status: statusFn } as unknown as Response,
-      next,
-    );
+    bearerMiddleware({ headers: {} } as Request, { status: statusFn } as unknown as Response, next);
     expect(statusFn).toHaveBeenCalledWith(401);
     expect(next).not.toHaveBeenCalled();
 

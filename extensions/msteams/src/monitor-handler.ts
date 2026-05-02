@@ -345,6 +345,9 @@ export function registerMSTeamsHandlers<T extends MSTeamsActivityHandler>(
         }
       }
 
+      // Non-poll adaptiveCard/action invokes get dispatched here as text so the
+      // agent can react. Poll votes are intercepted in monitor.ts's
+      // app.on("card.action") handler which returns the InvokeResponse to Teams.
       if (ctx.activity?.type === "invoke" && ctx.activity?.name === "adaptiveCard/action") {
         const text = serializeAdaptiveCardActionValue(ctx.activity?.value);
         if (text) {
@@ -356,9 +359,8 @@ export function registerMSTeamsHandlers<T extends MSTeamsActivityHandler>(
               text,
             },
           });
-          return;
         }
-        deps.log.debug?.("skipping adaptive card action invoke without value payload");
+        return;
       }
 
       // Bot Framework OAuth SSO: Teams sends signin/tokenExchange (with a

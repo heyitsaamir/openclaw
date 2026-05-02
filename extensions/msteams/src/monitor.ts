@@ -1,6 +1,5 @@
 import type { Request, Response } from "express";
 import {
-  DEFAULT_WEBHOOK_MAX_BODY_BYTES,
   keepHttpServerTaskAlive,
   mergeAllowlist,
   summarizeMapping,
@@ -11,13 +10,17 @@ import { createMSTeamsConversationStoreFs } from "./conversation-store-fs.js";
 import type { MSTeamsConversationStore } from "./conversation-store.js";
 import { formatUnknownError } from "./errors.js";
 import { registerMSTeamsHandlers, type MSTeamsActivityHandler } from "./monitor-handler.js";
-import { createMSTeamsPollStoreFs, type MSTeamsPollStore } from "./polls.js";
+import {
+  createMSTeamsPollStoreFs,
+  extractMSTeamsPollVote,
+  type MSTeamsPollStore,
+} from "./polls.js";
 import {
   resolveMSTeamsChannelAllowlist,
   resolveMSTeamsUserAllowlist,
 } from "./resolve-allowlist.js";
 import { getMSTeamsRuntime } from "./runtime.js";
-import { createMSTeamsTokenProvider, loadMSTeamsSdkWithAuth } from "./sdk.js";
+import { createMSTeamsTokenProvider, loadMSTeamsSdkWithAuth, type MSTeamsApp } from "./sdk.js";
 import { createMSTeamsSsoTokenStoreFs } from "./sso-token-store.js";
 import type { MSTeamsSsoDeps } from "./sso.js";
 import { resolveMSTeamsCredentials } from "./token.js";
@@ -36,7 +39,6 @@ export type MonitorMSTeamsResult = {
   shutdown: () => Promise<void>;
 };
 
-const MSTEAMS_WEBHOOK_MAX_BODY_BYTES = DEFAULT_WEBHOOK_MAX_BODY_BYTES;
 export async function monitorMSTeamsProvider(
   opts: MonitorMSTeamsOpts,
 ): Promise<MonitorMSTeamsResult> {
@@ -243,7 +245,11 @@ export async function monitorMSTeamsProvider(
   // registers POST /api/messages (or configured path) and handles JWT
   // validation + body parsing internally.
   const { app } = await loadMSTeamsSdkWithAuth(creds, {
-    httpServerAdapter: new (await import("@microsoft/teams.apps")).ExpressAdapter(expressApp),
+    httpServerAdapter: new (
+      (await import("@microsoft/teams.apps")) as unknown as {
+        ExpressAdapter: new (app: unknown) => unknown;
+      }
+    ).ExpressAdapter(expressApp) as never,
     messagingEndpoint: configuredPath,
   });
 
@@ -284,12 +290,83 @@ export async function monitorMSTeamsProvider(
     sso: ssoDeps,
   });
 
+  // Handle adaptiveCard/action invokes (Action.Execute Universal Action Model).
+  // We must return an InvokeResponse-shaped value so Teams updates the card UI;
+  // returning nothing or letting the catch-all process it makes Teams report
+  // "Unable to reach app".
+  app.on("card.action", async (ctx: unknown) => {
+    const adaptedCtx = adaptSdkContext(ctx, app);
+    try {
+      const activity = (
+        adaptedCtx as {
+          activity?: { value?: unknown; from?: { id?: string; aadObjectId?: string } };
+        }
+      ).activity;
+      const vote = extractMSTeamsPollVote(activity);
+      if (vote) {
+        const voterId = activity?.from?.aadObjectId ?? activity?.from?.id ?? "unknown";
+        try {
+          const poll = await pollStore.recordVote({
+            pollId: vote.pollId,
+            voterId,
+            selections: vote.selections,
+          });
+          if (poll) {
+            log.info("recorded poll vote", { pollId: vote.pollId, voterId });
+            return {
+              statusCode: 200,
+              type: "application/vnd.microsoft.activity.message",
+              value: "Vote recorded.",
+            };
+          }
+          log.debug?.("poll vote ignored (poll not found)", { pollId: vote.pollId });
+          return {
+            statusCode: 200,
+            type: "application/vnd.microsoft.activity.message",
+            value: "Poll not found.",
+          };
+        } catch (err) {
+          log.error("failed to record poll vote", {
+            pollId: vote.pollId,
+            error: formatUnknownError(err),
+          });
+          return {
+            statusCode: 500,
+            type: "application/vnd.microsoft.error",
+            value: { code: "RECORD_VOTE_FAILED", message: "Could not record vote." },
+          };
+        }
+      }
+      // Non-poll card actions: acknowledge silently and let the activity
+      // catch-all dispatch the action data to the agent if applicable.
+      await handler.run!(adaptedCtx);
+      return {
+        statusCode: 200,
+        type: "application/vnd.microsoft.activity.message",
+        value: "OK",
+      };
+    } catch (err) {
+      log.error("msteams card.action failed", { error: formatUnknownError(err) });
+      return {
+        statusCode: 500,
+        type: "application/vnd.microsoft.error",
+        value: { code: "CARD_ACTION_FAILED", message: "Card action failed." },
+      };
+    }
+  });
+
   // Catch all inbound activities from the SDK and delegate to our existing
   // handler dispatch system. The SDK has already validated JWT and parsed the
   // activity by this point.
-  app.on("activity" as never, async (ctx: unknown) => {
+  app.on("activity", async (ctx: unknown) => {
     try {
-      await handler.run!(ctx);
+      const activity = (ctx as { activity?: { type?: string; name?: string } }).activity;
+      // Skip adaptiveCard/action — handled by the dedicated card.action route
+      // above (which also dispatches non-poll actions to handler.run).
+      if (activity?.type === "invoke" && activity?.name === "adaptiveCard/action") {
+        return;
+      }
+      await handler.run!(adaptSdkContext(ctx, app));
     } catch (err) {
       log.error("msteams webhook failed", { error: formatUnknownError(err) });
     }
@@ -403,4 +480,52 @@ function buildActivityHandler(): MSTeamsActivityHandler {
   };
 
   return handler;
+}
+
+/**
+ * Adapt a new @microsoft/teams.apps SDK context to the MSTeamsTurnContext interface
+ * our handlers expect. The new SDK uses reply()/send() instead of sendActivity().
+ */
+function adaptSdkContext(ctx: unknown, app: MSTeamsApp): unknown {
+  if (!ctx || typeof ctx !== "object") {
+    return ctx;
+  }
+  const sdkCtx = ctx as {
+    activity?: { id?: string; conversation?: { id?: string } };
+    reply?: (activity: unknown) => Promise<unknown>;
+    send?: (activity: unknown) => Promise<unknown>;
+    stream?: {
+      emit(a: unknown): void;
+      update(t: string): void;
+      close(): unknown;
+      readonly canceled: boolean;
+    };
+  };
+  if (typeof sdkCtx.reply !== "function" && typeof sdkCtx.send !== "function") {
+    // Already adapted or old-style context — pass through.
+    return ctx;
+  }
+  const conversationId = sdkCtx.activity?.conversation?.id ?? "";
+  // Use send() not reply(): reply() prepends a blockquote to message activities
+  // and passes typing activities through TypingActivity.from() which strips
+  // custom entities (including streaminfo). send() passes the activity as-is.
+  const sendActivity = (activity: unknown) => sdkCtx.send!(activity);
+  return Object.assign(Object.create(Object.getPrototypeOf(ctx)), ctx, {
+    sendActivity,
+    sendActivities: async (activities: unknown[]) => {
+      const results: unknown[] = [];
+      for (const a of activities) {
+        results.push(await sendActivity(a));
+      }
+      return results;
+    },
+    updateActivity: async (activity: { id?: string; [key: string]: unknown }) => {
+      const activityId = activity.id ?? "";
+      return app.api.conversations.activities(conversationId).update(activityId, activity);
+    },
+    deleteActivity: async (activityId: string) => {
+      return app.api.conversations.activities(conversationId).delete(activityId);
+    },
+    stream: sdkCtx.stream,
+  });
 }

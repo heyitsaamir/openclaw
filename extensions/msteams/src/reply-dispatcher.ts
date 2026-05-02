@@ -20,12 +20,12 @@ import {
   renderReplyPayloadsToMessages,
   sendMSTeamsMessages,
 } from "./messenger.js";
-import type { MSTeamsApp } from "./sdk.js";
 import type { MSTeamsMonitorLogger } from "./monitor-types.js";
 import { createTeamsReplyStreamController } from "./reply-stream-controller.js";
 import { withRevokedProxyFallback } from "./revoked-context.js";
 import { getMSTeamsRuntime } from "./runtime.js";
 import type { MSTeamsTurnContext } from "./sdk-types.js";
+import type { MSTeamsApp } from "./sdk.js";
 
 export { pickInformativeStatusText } from "./reply-stream-controller.js";
 
@@ -140,7 +140,6 @@ export function createMSTeamsReplyDispatcher(params: {
     conversationType,
     context: params.context,
     feedbackLoopEnabled,
-    log: params.log,
   });
   // Wire the forward-declared gate used by sendTypingIndicator.
   streamActiveRef.current = () => streamController.isStreamActive();

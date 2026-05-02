@@ -1,234 +1,146 @@
 import { describe, expect, it, vi } from "vitest";
-
-const streamInstances = vi.hoisted(
-  () =>
-    [] as Array<{
-      hasContent: boolean;
-      isFinalized: boolean;
-      isFailed: boolean;
-      streamedLength: number;
-      sendInformativeUpdate: ReturnType<typeof vi.fn>;
-      update: ReturnType<typeof vi.fn>;
-      finalize: ReturnType<typeof vi.fn>;
-    }>,
-);
-
-vi.mock("./streaming-message.js", () => ({
-  TeamsHttpStream: class {
-    hasContent = false;
-    isFinalized = false;
-    isFailed = false;
-    streamedLength = 0;
-    sendInformativeUpdate = vi.fn(async () => {});
-    update = vi.fn(function (
-      this: { hasContent: boolean; streamedLength: number },
-      payloadText?: string,
-    ) {
-      this.hasContent = true;
-      this.streamedLength = payloadText?.length ?? 0;
-    });
-    finalize = vi.fn(async function (this: { isFinalized: boolean }) {
-      this.isFinalized = true;
-    });
-
-    constructor() {
-      streamInstances.push(this as never);
-    }
-  },
-}));
-
 import { createTeamsReplyStreamController } from "./reply-stream-controller.js";
 
+function makeStream() {
+  return {
+    emit: vi.fn(),
+    update: vi.fn(),
+    close: vi.fn(async () => undefined),
+    canceled: false,
+  };
+}
+
+function makeContext(stream?: ReturnType<typeof makeStream>) {
+  return { activity: { type: "message" }, stream } as never;
+}
+
+function makeController(
+  opts: { conversationType?: string; stream?: ReturnType<typeof makeStream> } = {},
+) {
+  const stream = opts.stream;
+  return createTeamsReplyStreamController({
+    conversationType: opts.conversationType ?? "personal",
+    context: makeContext(stream),
+    feedbackLoopEnabled: false,
+  });
+}
+
 describe("createTeamsReplyStreamController", () => {
-  function createController() {
-    streamInstances.length = 0;
-    return createTeamsReplyStreamController({
-      conversationType: "personal",
-      context: { sendActivity: vi.fn(async () => ({ id: "a" })) } as never,
-      feedbackLoopEnabled: false,
-      log: { debug: vi.fn() } as never,
-    });
-  }
-
-  it("suppresses fallback for first text segment that was streamed", () => {
-    const ctrl = createController();
-    ctrl.onPartialReply({ text: "Hello world" });
-
-    const result = ctrl.preparePayload({ text: "Hello world" });
-    expect(result).toBeUndefined();
+  it("emits chunks via stream.emit when tokens arrive", () => {
+    const stream = makeStream();
+    const ctrl = makeController({ stream });
+    ctrl.onPartialReply({ text: "hello" });
+    expect(stream.emit).toHaveBeenCalledWith("hello");
   });
 
-  it("when stream fails after partial delivery, fallback sends only remaining text", () => {
-    const ctrl = createController();
-    const fullText = "a".repeat(4000) + "b".repeat(200);
-
-    ctrl.onPartialReply({ text: fullText });
-    streamInstances[0].hasContent = false;
-    streamInstances[0].isFailed = true;
-    streamInstances[0].isFinalized = true;
-    streamInstances[0].streamedLength = 4000;
-
-    const result = ctrl.preparePayload({ text: fullText });
-    expect(result).toEqual({ text: "b".repeat(200) });
+  it("sends informative update once on first onReplyStart", async () => {
+    const stream = makeStream();
+    const ctrl = makeController({ stream });
+    await ctrl.onReplyStart();
+    await ctrl.onReplyStart();
+    expect(stream.update).toHaveBeenCalledTimes(1);
   });
 
-  it("when stream fails before sending content, fallback sends full text", () => {
-    const ctrl = createController();
-    const fullText = "Failure at first chunk";
-
-    ctrl.onPartialReply({ text: fullText });
-    streamInstances[0].hasContent = false;
-    streamInstances[0].isFailed = true;
-    streamInstances[0].isFinalized = true;
-    streamInstances[0].streamedLength = 0;
-
-    const result = ctrl.preparePayload({ text: fullText });
-    expect(result).toEqual({ text: fullText });
+  it("suppresses block delivery when text was streamed", () => {
+    const stream = makeStream();
+    const ctrl = makeController({ stream });
+    ctrl.onPartialReply({ text: "streamed" });
+    expect(ctrl.preparePayload({ text: "streamed" })).toBeUndefined();
   });
 
-  it("allows fallback delivery for second text segment after tool calls", () => {
-    const ctrl = createController();
-
-    // First text segment: streaming tokens arrive
-    ctrl.onPartialReply({ text: "First segment" });
-
-    // First segment complete: preparePayload suppresses (stream handled it)
-    const result1 = ctrl.preparePayload({ text: "First segment" });
-    expect(result1).toBeUndefined();
-
-    // Tool calls happen... then second text segment arrives via deliver()
-    // preparePayload should allow fallback delivery for this segment
-    const result2 = ctrl.preparePayload({ text: "Second segment after tools" });
-    expect(result2).toEqual({ text: "Second segment after tools" });
-  });
-
-  it("finalizes the stream when suppressing first segment", () => {
-    const ctrl = createController();
-    ctrl.onPartialReply({ text: "Streamed text" });
-
-    ctrl.preparePayload({ text: "Streamed text" });
-
-    expect(streamInstances[0]?.finalize).toHaveBeenCalled();
-  });
-
-  it("uses fallback even when onPartialReply fires after stream finalized", () => {
-    const ctrl = createController();
-
-    // First text segment: streaming tokens arrive
-    ctrl.onPartialReply({ text: "First segment" });
-
-    // First segment complete: preparePayload suppresses and finalizes stream
-    const result1 = ctrl.preparePayload({ text: "First segment" });
-    expect(result1).toBeUndefined();
-    expect(streamInstances[0]?.isFinalized).toBe(true);
-
-    // Post-tool partial replies fire again (stream.update is a no-op since finalized)
-    ctrl.onPartialReply({ text: "Second segment" });
-
-    // Must still use fallback because stream is finalized and can't deliver
-    const result2 = ctrl.preparePayload({ text: "Second segment" });
-    expect(result2).toEqual({ text: "Second segment" });
-  });
-
-  it("delivers all segments across 3+ tool call rounds", () => {
-    const ctrl = createController();
-
-    // Round 1: text → tool
-    ctrl.onPartialReply({ text: "Segment 1" });
-    expect(ctrl.preparePayload({ text: "Segment 1" })).toBeUndefined();
-
-    // Round 2: text → tool
-    ctrl.onPartialReply({ text: "Segment 2" });
-    const r2 = ctrl.preparePayload({ text: "Segment 2" });
-    expect(r2).toEqual({ text: "Segment 2" });
-
-    // Round 3: final text
-    ctrl.onPartialReply({ text: "Segment 3" });
-    const r3 = ctrl.preparePayload({ text: "Segment 3" });
-    expect(r3).toEqual({ text: "Segment 3" });
-  });
-
-  it("passes media+text payload through fully after stream finalized", () => {
-    const ctrl = createController();
-
-    // First segment streamed and finalized
-    ctrl.onPartialReply({ text: "Streamed text" });
-    ctrl.preparePayload({ text: "Streamed text" });
-
-    // Second segment has both text and media — should pass through fully
-    const result = ctrl.preparePayload({
-      text: "Post-tool text with image",
-      mediaUrl: "https://example.com/tool-output.png",
-    });
-    expect(result).toEqual({
-      text: "Post-tool text with image",
-      mediaUrl: "https://example.com/tool-output.png",
-    });
-  });
-
-  it("still strips text from media payloads when stream handled text", () => {
-    const ctrl = createController();
-    ctrl.onPartialReply({ text: "Some text" });
-
-    const result = ctrl.preparePayload({
-      text: "Some text",
-      mediaUrl: "https://example.com/image.png",
-    });
-    expect(result).toEqual({
+  it("strips text but keeps media when text was streamed and payload has media", () => {
+    const stream = makeStream();
+    const ctrl = makeController({ stream });
+    ctrl.onPartialReply({ text: "streamed" });
+    expect(ctrl.preparePayload({ text: "streamed", mediaUrl: "https://x/y.png" })).toEqual({
       text: undefined,
-      mediaUrl: "https://example.com/image.png",
+      mediaUrl: "https://x/y.png",
+    });
+  });
+
+  it("falls back to block delivery when stream was canceled by Teams", () => {
+    const stream = makeStream();
+    const ctrl = makeController({ stream });
+    ctrl.onPartialReply({ text: "partial" });
+    stream.canceled = true;
+    expect(ctrl.preparePayload({ text: "partial complete" })).toEqual({
+      text: "partial complete",
+    });
+  });
+
+  it("falls back to block delivery when no tokens were streamed", () => {
+    const stream = makeStream();
+    const ctrl = makeController({ stream });
+    expect(ctrl.preparePayload({ text: "tool-only response" })).toEqual({
+      text: "tool-only response",
+    });
+  });
+
+  it("closes the stream in finalize when tokens were emitted", async () => {
+    const stream = makeStream();
+    const ctrl = makeController({ stream });
+    ctrl.onPartialReply({ text: "streamed" });
+    await ctrl.finalize();
+    expect(stream.close).toHaveBeenCalled();
+  });
+
+  it("does not close the stream in finalize when no tokens were emitted", async () => {
+    const stream = makeStream();
+    const ctrl = makeController({ stream });
+    await ctrl.finalize();
+    expect(stream.close).not.toHaveBeenCalled();
+  });
+
+  it("does not close a canceled stream in finalize", async () => {
+    const stream = makeStream();
+    const ctrl = makeController({ stream });
+    ctrl.onPartialReply({ text: "partial" });
+    stream.canceled = true;
+    await ctrl.finalize();
+    expect(stream.close).not.toHaveBeenCalled();
+  });
+
+  describe("non-personal conversation", () => {
+    it("does not stream in channels — onPartialReply is a no-op", () => {
+      const stream = makeStream();
+      const ctrl = makeController({ conversationType: "channel", stream });
+      ctrl.onPartialReply({ text: "anything" });
+      expect(stream.emit).not.toHaveBeenCalled();
+    });
+
+    it("hasStream returns false for channels", () => {
+      const ctrl = makeController({ conversationType: "channel", stream: makeStream() });
+      expect(ctrl.hasStream()).toBe(false);
+    });
+
+    it("preparePayload returns payload unchanged for channels", () => {
+      const ctrl = makeController({ conversationType: "channel", stream: makeStream() });
+      expect(ctrl.preparePayload({ text: "hi" })).toEqual({ text: "hi" });
     });
   });
 
   describe("isStreamActive", () => {
-    it("returns false before any tokens arrive so typing keepalive can warm up", () => {
-      const ctrl = createController();
-      expect(ctrl.isStreamActive()).toBe(false);
+    it("returns false before any tokens arrive", () => {
+      expect(makeController({ stream: makeStream() }).isStreamActive()).toBe(false);
     });
 
-    it("returns false after the informative update but before tokens arrive", async () => {
-      const ctrl = createController();
-      await ctrl.onReplyStart();
-      expect(ctrl.isStreamActive()).toBe(false);
-    });
-
-    it("returns true while the stream is actively receiving tokens", () => {
-      const ctrl = createController();
-      ctrl.onPartialReply({ text: "Streaming tokens" });
+    it("returns true while receiving tokens", () => {
+      const ctrl = makeController({ stream: makeStream() });
+      ctrl.onPartialReply({ text: "tokens" });
       expect(ctrl.isStreamActive()).toBe(true);
     });
 
-    it("returns false after the stream is finalized between tool rounds", () => {
-      const ctrl = createController();
-
-      ctrl.onPartialReply({ text: "First segment" });
-      expect(ctrl.isStreamActive()).toBe(true);
-
-      // First segment complete: stream is finalized so the typing keepalive
-      // can resume during the tool chain that follows.
-      ctrl.preparePayload({ text: "First segment" });
+    it("returns false when stream is canceled", () => {
+      const stream = makeStream();
+      const ctrl = makeController({ stream });
+      ctrl.onPartialReply({ text: "tokens" });
+      stream.canceled = true;
       expect(ctrl.isStreamActive()).toBe(false);
     });
 
-    it("returns false when the stream has failed", () => {
-      const ctrl = createController();
-
-      ctrl.onPartialReply({ text: "First segment" });
-      expect(ctrl.isStreamActive()).toBe(true);
-
-      streamInstances[0].isFailed = true;
-      expect(ctrl.isStreamActive()).toBe(false);
-    });
-
-    it("returns false when conversationType is not personal", () => {
-      streamInstances.length = 0;
-      const ctrl = createTeamsReplyStreamController({
-        conversationType: "channel",
-        context: { sendActivity: vi.fn() } as never,
-        feedbackLoopEnabled: false,
-        log: { debug: vi.fn() } as never,
-      });
-      ctrl.onPartialReply({ text: "anything" });
+    it("returns false for non-personal conversations", () => {
+      const ctrl = makeController({ conversationType: "channel", stream: makeStream() });
+      ctrl.onPartialReply({ text: "tokens" });
       expect(ctrl.isStreamActive()).toBe(false);
     });
   });

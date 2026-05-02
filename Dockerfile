@@ -76,9 +76,14 @@ RUN --mount=type=cache,id=openclaw-pnpm-store,target=/root/.local/share/pnpm/sto
 
 # pnpm v10+ may append peer-resolution hashes to virtual-store folder names; do not hardcode `.pnpm/...`
 # paths. Fail fast here if the Matrix native binding did not materialize after install.
+# Skip if matrix is not a bundled extension (e.g. msteams-only builds).
 RUN echo "==> Verifying critical native addons..." && \
-    find /app/node_modules -name "matrix-sdk-crypto*.node" 2>/dev/null | grep -q . || \
-    (echo "ERROR: matrix-sdk-crypto native addon missing (pnpm install may have silently failed on this arch)" >&2 && exit 1)
+    if printf '%s\n' "$OPENCLAW_EXTENSIONS" | tr ' ' '\n' | grep -qx 'matrix'; then \
+      find /app/node_modules -name "matrix-sdk-crypto*.node" 2>/dev/null | grep -q . || \
+          (echo "ERROR: matrix-sdk-crypto native addon missing (pnpm install may have silently failed on this arch)" >&2 && exit 1); \
+    else \
+      echo "  matrix not bundled, skipping matrix-sdk-crypto check"; \
+    fi
 
 COPY . .
 

@@ -16,7 +16,6 @@ import {
 } from "./errors.js";
 import {
   buildConversationReference,
-  type MSTeamsAdapter,
   type MSTeamsRenderedMessage,
   renderReplyPayloadsToMessages,
   sendMSTeamsMessages,
@@ -26,6 +25,7 @@ import { createTeamsReplyStreamController } from "./reply-stream-controller.js";
 import { withRevokedProxyFallback } from "./revoked-context.js";
 import { getMSTeamsRuntime } from "./runtime.js";
 import type { MSTeamsTurnContext } from "./sdk-types.js";
+import type { MSTeamsApp } from "./sdk.js";
 
 export { pickInformativeStatusText } from "./reply-stream-controller.js";
 
@@ -36,7 +36,7 @@ export function createMSTeamsReplyDispatcher(params: {
   accountId?: string;
   runtime: RuntimeEnv;
   log: MSTeamsMonitorLogger;
-  adapter: MSTeamsAdapter;
+  app: MSTeamsApp;
   appId: string;
   conversationRef: StoredConversationReference;
   context: MSTeamsTurnContext;
@@ -84,13 +84,7 @@ export function createMSTeamsReplyDispatcher(params: {
       },
       onRevoked: async () => {
         const baseRef = buildConversationReference(params.conversationRef);
-        await params.adapter.continueConversation(
-          params.appId,
-          { ...baseRef, activityId: undefined },
-          async (ctx) => {
-            await ctx.sendActivity({ type: "typing" });
-          },
-        );
+        await params.app.send(baseRef.conversation.id, { type: "typing" });
       },
       onRevokedLog: () => {
         params.log.debug?.("turn context revoked, sending typing via proactive messaging");
@@ -146,7 +140,6 @@ export function createMSTeamsReplyDispatcher(params: {
     conversationType,
     context: params.context,
     feedbackLoopEnabled,
-    log: params.log,
   });
   // Wire the forward-declared gate used by sendTypingIndicator.
   streamActiveRef.current = () => streamController.isStreamActive();
@@ -161,7 +154,7 @@ export function createMSTeamsReplyDispatcher(params: {
   const sendMessages = async (messages: MSTeamsRenderedMessage[]): Promise<string[]> => {
     return sendMSTeamsMessages({
       replyStyle: params.replyStyle,
-      adapter: params.adapter,
+      app: params.app,
       appId: params.appId,
       conversationRef: params.conversationRef,
       context: params.context,
